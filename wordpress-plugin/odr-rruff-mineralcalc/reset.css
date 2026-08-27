@@ -1,0 +1,51 @@
+#mineral-parser-root,
+#mineral-parser-root * {
+    box-sizing: border-box !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    line-height: normal !important;
+    list-style: none !important;
+    letter-spacing: normal !important;
+}
+
+#mineral-parser-root table {
+    border-collapse: collapse;
+    border-spacing: 0;
+    margin: 0;
+}
+
+#mineral-parser-root th,
+#mineral-parser-root td {
+    padding: 0;
+    border: none;
+    font-weight: normal;
+    vertical-align: top;
+}
+
+#mineral-parser-root button {
+    appearance: none;
+    -webkit-appearance: none;
+    border-radius: 0;
+    cursor: pointer;
+    margin: 0;
+    padding: 0;
+}
+
+#mineral-parser-root input:not([type="checkbox"]):not([type="radio"]),
+#mineral-parser-root select,
+#mineral-parser-root textarea {
+    appearance: none;
+    -webkit-appearance: none;
+    border-radius: 0;
+    margin: 0;
+    width: auto;
+    color: inherit;
+}
+
+#mineral-parser-root input[type="checkbox"],
+#mineral-parser-root input[type="radio"] {
+    margin: 0;
+}
+
+#mineral-parser-root a {
+    text-decoration: none;
+}
