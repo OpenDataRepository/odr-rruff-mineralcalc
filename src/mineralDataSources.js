@@ -34,8 +34,10 @@ export function normalizeMineralRows(rawRows) {
 }
 
 // Reads the "Mineral names and valence formula.xlsx" layout: header row,
-// then Name in column A, formula in column B.
-export async function loadMineralsFromXlsx(file) {
+// then Name in column A, formula in column B. Works for .csv too — XLSX.read
+// sniffs the file content and parses plain CSV text the same way as a
+// worksheet, so no separate CSV-specific code path is needed.
+export async function loadMineralsFromFile(file) {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -45,9 +47,9 @@ export async function loadMineralsFromXlsx(file) {
 }
 
 // Writes {name, formulaStr} rows back out in the exact layout
-// loadMineralsFromXlsx reads — header row, then Name/Formula columns — so a
+// loadMineralsFromFile reads — header row, then Name/Formula columns — so a
 // chosen subset (e.g. just the rows that failed to parse) can be corrected
-// and re-uploaded through "Upload .xlsx" to check them again.
+// and re-uploaded through "Upload .xlsx / .csv" to check them again.
 export function exportMineralsToXlsx(rows, filename) {
   const aoa = [["Name", "Formula"], ...rows.map((r) => [r.name, r.formulaStr])];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -84,6 +86,6 @@ export async function loadMineralsFromApi(
 // Registry so the UI can offer a source picker without importing every
 // loader individually. Add new entries here as new sources come online.
 export const MINERAL_DATA_SOURCES = {
-  xlsx: { id: "xlsx", label: "Excel file", load: loadMineralsFromXlsx },
+  xlsx: { id: "xlsx", label: "Excel / CSV file", load: loadMineralsFromFile },
   api: { id: "api", label: "Database API", load: loadMineralsFromApi },
 };

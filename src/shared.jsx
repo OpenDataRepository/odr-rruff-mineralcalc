@@ -21,6 +21,16 @@ export const tdStyle = {
   borderBottom: `1px solid ${COLORS.border}`,
 };
 
+export const backButtonStyle = {
+  background: COLORS.panelAlt,
+  border: `1px solid ${COLORS.border}`,
+  color: COLORS.text,
+  borderRadius: 8,
+  padding: "6px 12px",
+  fontSize: 12.5,
+  cursor: "pointer",
+};
+
 // Renders a formula string's '^2+^' / '_2_' notation as real <sup>/<sub>
 // elements, e.g. "Pb^2+^_2_" -> Pb, <sup>2+</sup>, <sub>2</sub>.
 export function renderFormula(str) {

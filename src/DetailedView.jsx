@@ -1,15 +1,5 @@
 import React, { memo } from "react";
-import { COLORS, renderFormula } from "./shared.jsx";
-
-const backButtonStyle = {
-  background: COLORS.panelAlt,
-  border: `1px solid ${COLORS.border}`,
-  color: COLORS.text,
-  borderRadius: 8,
-  padding: "6px 12px",
-  fontSize: 12.5,
-  cursor: "pointer",
-};
+import { COLORS, renderFormula, backButtonStyle } from "./shared.jsx";
 
 const detailTdStyle = {
   padding: "7px 4px",
@@ -84,6 +74,10 @@ export function valenceLabel(a) {
     : (a.valence > 0 ? "+" : "") + a.valence.toFixed(1);
 }
 
+const DETAIL_HEADERS_METALLIC = DETAIL_HEADERS.filter((h) => h.label !== "Valence");
+const DETAIL_COL_WIDTHS = [14, 16, 14, 19, 19, 18];
+const DETAIL_COL_WIDTHS_METALLIC = [16, 16, 22, 22, 24];
+
 // Atomic/molar mass is grams per mole (g/mol) — a formula unit's mass
 // divided by how many moles of it you have — not g/cm^3, which is density
 // (mass per unit volume) and isn't something this table computes.
@@ -93,6 +87,13 @@ export function valenceLabel(a) {
 // MineralFormulaParser.jsx) via the summary view, so `result` here always
 // describes one concrete composition.
 const DetailedView = memo(function DetailedView({ result, onBack }) {
+  // Native metals (e.g. Cu, Au) aren't ionic — reporting a per-atom valence
+  // or a "net charge" for them is meaningless, so both are hidden and only
+  // the atomic weight percents are shown. See isMetallicFormula in
+  // MineralFormulaParser.jsx.
+  const showValence = !result.isMetallic;
+  const headers = showValence ? DETAIL_HEADERS : DETAIL_HEADERS_METALLIC;
+  const colWidths = showValence ? DETAIL_COL_WIDTHS : DETAIL_COL_WIDTHS_METALLIC;
   return (
     <div style={{ maxWidth: 640, margin: "22px auto 0" }}>
       {(result.name || onBack) && (
@@ -131,23 +132,25 @@ const DetailedView = memo(function DetailedView({ result, onBack }) {
 
       <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <Stat label="Formula mass" value={`${result.totalMass.toFixed(3)} g/mol`} />
-        <Stat
-          label="Net charge"
-          value={result.netCharge.toFixed(3)}
-          warn={Math.abs(result.netCharge) > 0.001}
-        />
+        {showValence && (
+          <Stat
+            label="Net charge"
+            value={result.netCharge.toFixed(3)}
+            warn={Math.abs(result.netCharge) > 0.001}
+          />
+        )}
       </div>
 
       <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", maxWidth: 640 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13.5 }}>
           <colgroup>
-            {[14, 16, 14, 19, 19, 18].map((w, idx) => (
+            {colWidths.map((w, idx) => (
               <col key={idx} style={{ width: `${w}%` }} />
             ))}
           </colgroup>
           <thead>
             <tr style={{ background: COLORS.panelAlt }}>
-              {DETAIL_HEADERS.map(({ label, unit }) => (
+              {headers.map(({ label, unit }) => (
                 <th key={label} style={detailThStyle}>
                   <div
                     style={{
@@ -175,7 +178,7 @@ const DetailedView = memo(function DetailedView({ result, onBack }) {
                     <span style={{ color: COLORS.warn, marginLeft: 6, fontSize: 11 }}>unknown</span>
                   )}
                 </td>
-                <td style={detailTdStyle}>{valenceLabel(a)}</td>
+                {showValence && <td style={detailTdStyle}>{valenceLabel(a)}</td>}
                 <td style={detailTdStyle}>{a.count.toFixed(3)}</td>
                 <td style={detailTdStyle}>{a.weight ? a.weight.toFixed(3) : "—"}</td>
                 <td style={detailTdStyle}>{a.totalMass.toFixed(3)}</td>
@@ -188,9 +191,9 @@ const DetailedView = memo(function DetailedView({ result, onBack }) {
               <td style={{ ...detailTdStyle, fontWeight: 700, borderTop: `2.5px solid ${COLORS.textDim}`, borderBottom: "none" }}>
                 Total
               </td>
-              <td style={{ ...detailTdStyle, borderTop: `2.5px solid ${COLORS.textDim}`, borderBottom: "none" }} />
-              <td style={{ ...detailTdStyle, borderTop: `2.5px solid ${COLORS.textDim}`, borderBottom: "none" }} />
-              <td style={{ ...detailTdStyle, borderTop: `2.5px solid ${COLORS.textDim}`, borderBottom: "none" }} />
+              {Array.from({ length: headers.length - 3 }, (_, idx) => (
+                <td key={idx} style={{ ...detailTdStyle, borderTop: `2.5px solid ${COLORS.textDim}`, borderBottom: "none" }} />
+              ))}
               <td
                 style={{
                   ...detailTdStyle,
