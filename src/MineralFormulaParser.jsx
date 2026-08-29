@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef, useLayoutEffect, memo } from "react";
-import { loadMineralsFromXlsx, loadMineralsFromApi, exportMineralsToXlsx } from "./mineralDataSources.js";
-import { COLORS, tdStyle, renderFormula } from "./shared.jsx";
-import { SummaryView, SummaryDetail } from "./SummaryView.jsx";
-import { valenceLabel } from "./DetailedView.jsx";
+import { loadMineralsFromFile, loadMineralsFromApi } from "./mineralDataSources.js";
+import { COLORS, tdStyle, renderFormula, backButtonStyle } from "./shared.jsx";
+import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
+import { formatDetailText, downloadTxt } from "./reportText.js";
 
 // ---------------------------------------------------------------------------
 // Element data: symbol -> { weight, valences: [default, ...alternates] }
@@ -660,6 +660,21 @@ function mergeAtoms(atoms) {
   return merged;
 }
 
+// True only when every recognized element present can *never* carry a
+// negative valence per ELEMENTS' table — e.g. native metals like Cu or Au.
+// Those aren't ionic compounds, so reporting a "net charge" or a per-atom
+// valence for them is meaningless — this flag tells the views to hide both
+// and show only atomic weight percents. A formula containing even one
+// unrecognized element is treated conservatively (not metallic), since
+// there's no data to rule out a negative valence for it.
+function isMetallicFormula(atoms) {
+  return atoms.every((a) => {
+    const data = ELEMENTS[a.symbol];
+    if (!data) return false;
+    return !data.valences.some((v) => v < 0);
+  });
+}
+
 function computeMassAndPct(atoms) {
   const totalMass = atoms.reduce((s, a) => s + (a.weight || 0) * a.count, 0);
   const netCharge = atoms.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
@@ -668,7 +683,7 @@ function computeMassAndPct(atoms) {
     totalMass: (a.weight || 0) * a.count,
     percent: totalMass ? ((a.weight || 0) * a.count * 100) / totalMass : 0,
   }));
-  return { atoms: withPct, totalMass, netCharge };
+  return { atoms: withPct, totalMass, netCharge, isMetallic: isMetallicFormula(atoms) };
 }
 
 // Finds every plain (non-REE) comma in the formula, together with its
@@ -921,7 +936,7 @@ function analyzeOne(formulaStr) {
   };
 }
 
-function analyze(rawInput) {
+export function analyze(rawInput) {
   // Allow "Name<TAB>Formula" pasted straight from the source list.
   const parts = rawInput.split("\t");
   const name = parts.length > 1 ? parts[0].trim() : "";
@@ -943,7 +958,7 @@ function analyze(rawInput) {
 // reshapes it into a plain (non-range) result, so DetailedView renders just
 // that one column instead of both — used once a specific "(1)"/"(2)" has
 // been picked out of the summary rather than showing the whole range.
-function pickColumn(result, idx) {
+export function pickColumn(result, idx) {
   if (!result.isRange) return result;
   const col = result.columns[idx];
   return {
@@ -953,13 +968,14 @@ function pickColumn(result, idx) {
     atoms: col.atoms,
     totalMass: col.totalMass,
     netCharge: col.netCharge,
+    isMetallic: col.isMetallic,
   };
 }
 
 // ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
-const EXAMPLES = [
+export const EXAMPLES = [
   "Abellaite\tNaPb^2+^_2_(CO_3_)_2_(OH)",
   "Abenakiite-(Ce)\tNa_26_Ce^3+^_6_(SiO_3_)_6_(PO_4_)_6_(CO_3_)_6_(S^4+^O_2_)O",
   "Abernathyite\tK(U^6+^O_2_)As^5+^O_4_·3H_2_O",
@@ -970,12 +986,14 @@ const EXAMPLES = [
 // there's no live database to point it at yet — flip this on once there is.
 const SHOW_API_LOADER = false;
 
-export default function MineralFormulaParser() {
+export default function MineralFormulaParser({ initialName, initialFormula, onBack } = {}) {
   const [nameInput, setNameInput] = useState(() => {
+    if (initialName) return initialName;
     const params = new URLSearchParams(window.location.search);
     return params.get("mineral") || EXAMPLES[0].split("\t")[0];
   });
   const [formulaInput, setFormulaInput] = useState(() => {
+    if (initialFormula) return initialFormula;
     const params = new URLSearchParams(window.location.search);
     return params.get("formula") || EXAMPLES[0].split("\t")[1];
   });
@@ -991,6 +1009,10 @@ export default function MineralFormulaParser() {
   // each row's stable index into batchResults (not its position in the
   // currently-filtered/search view, which shifts as the user types).
   const [selectedBatchIds, setSelectedBatchIds] = useState(() => new Set());
+  // Bumped on reset to force the (uncontrolled) file input to remount, so
+  // its internal value clears too — otherwise re-selecting the same file
+  // wouldn't fire onChange a second time.
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [apiUrl, setApiUrl] = useState("");
   const [apiLoading, setApiLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -1104,9 +1126,21 @@ export default function MineralFormulaParser() {
     if (!file) return;
     setBatchFileName(file.name);
     setApiError(null);
-    const parsed = await loadMineralsFromXlsx(file);
+    const parsed = await loadMineralsFromFile(file);
     setBatchRows(parsed);
     setSelectedBatchIds(new Set());
+  }
+
+  // Clears the uploaded batch entirely, back to the empty "no file uploaded"
+  // state — including the search/filter and selection tied to it, and the
+  // file input itself (via fileInputKey) so the same file can be re-uploaded.
+  function handleResetUpload() {
+    setBatchRows(null);
+    setBatchFileName("");
+    setBatchSearch("");
+    setBatchErrorFilter("all");
+    setSelectedBatchIds(new Set());
+    setFileInputKey((k) => k + 1);
   }
 
   // Loads the mineral list from a database/REST API instead of a file.
@@ -1164,15 +1198,23 @@ export default function MineralFormulaParser() {
       }}
     >
       <div style={{ maxWidth: 780, margin: "0 auto" }}>
-        <div style={{ marginBottom: 22 }}>
+        <div
+          style={{
+            marginBottom: 22,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
           <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>
-            Mineral formula breakdown
+            Formula Weights
           </h1>
-          <p style={{ color: COLORS.textDim, fontSize: 13.5, marginTop: 6, lineHeight: 1.5 }}>
-            Type a formula using <code style={codeStyle}>^2+^</code> for valence and{" "}
-            <code style={codeStyle}>_2_</code> for subscripts, e.g.{" "}
-            <code style={codeStyle}>Pb^2+^_2_(CO_3_)_2_(OH)</code>.
-          </p>
+          {onBack && (
+            <button onClick={onBack} style={{ ...backButtonStyle, flexShrink: 0 }}>
+              ← Back
+            </button>
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
@@ -1198,7 +1240,9 @@ export default function MineralFormulaParser() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>Equation</label>
+          <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
+            Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
+          </label>
           <textarea
             value={formulaInput}
             onChange={(e) => setFormulaInput(e.target.value)}
@@ -1221,9 +1265,44 @@ export default function MineralFormulaParser() {
           />
         </div>
 
+        {error && (
+          <div style={{ marginTop: 18 }}>
+            <FormulaHeader title={nameInput} formulaStr={formulaInput} />
+            <div
+              style={{
+                padding: "12px 14px",
+                borderRadius: 8,
+                background: "#fbeee5",
+                border: `1px solid ${COLORS.warn}`,
+                color: COLORS.warn,
+                fontSize: 13.5,
+                fontFamily: COLORS.mono,
+              }}
+            >
+              {error}
+            </div>
+          </div>
+        )}
+
+        {result && !error && (
+          topOpenColumnIndex !== null ? (
+            <SummaryDetail
+              result={pickColumn(result, topOpenColumnIndex)}
+              onBack={() => setTopOpenColumnIndex(null)}
+            />
+          ) : (
+            <SummaryView
+              title={result.name}
+              formulaStr={result.formulaStr}
+              rows={topSummaryRows}
+              onSelect={setTopOpenColumnIndex}
+            />
+          )
+        )}
+
         <div
           style={{
-            marginTop: 22,
+            marginTop: 40,
             padding: "14px 16px",
             borderRadius: 10,
             border: `1px solid ${COLORS.border}`,
@@ -1231,7 +1310,8 @@ export default function MineralFormulaParser() {
           }}
         >
           <p style={{ color: COLORS.textDim, fontSize: 13, margin: "0 0 10px" }}>
-            Upload an excel file with a list of minerals to check them all at once.
+            Upload an excel or CSV file with a list of minerals{" "}
+            <span style={{ color: COLORS.warn }}>AND THEIR CHEMICAL FORMULAS IN THE FORMAT ABOVE</span> to check them all at once.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <label
@@ -1245,10 +1325,11 @@ export default function MineralFormulaParser() {
                 cursor: "pointer",
               }}
             >
-              Upload .xlsx
+              Upload .xlsx / .csv
               <input
+                key={fileInputKey}
                 type="file"
-                accept=".xlsx,.xls"
+                accept=".xlsx,.xls,.csv"
                 onChange={handleFileUpload}
                 style={{ display: "none" }}
               />
@@ -1260,6 +1341,24 @@ export default function MineralFormulaParser() {
                   <span style={{ color: COLORS.warn }}> · {errorRows.length} errors</span>
                 )}
               </span>
+            )}
+            {batchFileName && (
+              <button
+                onClick={handleResetUpload}
+                title="Remove the uploaded file and start over"
+                style={{
+                  background: "#fbeee5",
+                  border: `1px solid ${COLORS.warn}`,
+                  color: COLORS.warn,
+                  fontWeight: 600,
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Clear file
+              </button>
             )}
             {batchRows && batchRows.length > 0 && (
               <button
@@ -1281,7 +1380,7 @@ export default function MineralFormulaParser() {
                   opacity: selectedBatchIds.size === 0 ? 0.6 : 1,
                 }}
               >
-                Print selected (.txt){selectedBatchIds.size > 0 ? ` (${selectedBatchIds.size})` : ""}
+                Print List Report (.txt){selectedBatchIds.size > 0 ? ` (${selectedBatchIds.size})` : ""}
               </button>
             )}
             {batchRows && batchRows.length > 0 && (
@@ -1308,35 +1407,6 @@ export default function MineralFormulaParser() {
                 }}
               >
                 Print formulas (.txt){selectedBatchIds.size > 0 ? ` (${selectedBatchIds.size})` : ""}
-              </button>
-            )}
-            {batchRows && batchRows.length > 0 && (
-              // Exports the selected rows' original name/formula — not the
-              // error message — in the same layout "Upload .xlsx" reads, so
-              // picking "Only errors", checking the ones worth fixing, and
-              // exporting hands back a file that can be corrected and
-              // re-uploaded to check just those again.
-              <button
-                onClick={() =>
-                  exportMineralsToXlsx(
-                    batchResults.filter((r) => selectedBatchIds.has(r.id)),
-                    "mineral-selected.xlsx"
-                  )
-                }
-                disabled={selectedBatchIds.size === 0}
-                title="Export the selected rows' name/formula to an .xlsx file that can be corrected and re-uploaded"
-                style={{
-                  background: COLORS.panelAlt,
-                  border: `1px solid ${COLORS.border}`,
-                  color: COLORS.text,
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  fontSize: 13,
-                  cursor: selectedBatchIds.size === 0 ? "default" : "pointer",
-                  opacity: selectedBatchIds.size === 0 ? 0.6 : 1,
-                }}
-              >
-                Export selected (.xlsx){selectedBatchIds.size > 0 ? ` (${selectedBatchIds.size})` : ""}
               </button>
             )}
             {batchRows && batchRows.length > 0 && (
@@ -1461,90 +1531,9 @@ export default function MineralFormulaParser() {
             <ErrorsPanel rows={errorRows} onDownload={downloadErrorsTxt} />
           )}
         </div>
-
-        {error && (
-          <div
-            style={{
-              marginTop: 18,
-              padding: "12px 14px",
-              borderRadius: 8,
-              background: "#fbeee5",
-              border: `1px solid ${COLORS.warn}`,
-              color: COLORS.warn,
-              fontSize: 13.5,
-              fontFamily: COLORS.mono,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {result && !error && (
-          topOpenColumnIndex !== null ? (
-            <SummaryDetail
-              result={pickColumn(result, topOpenColumnIndex)}
-              onBack={() => setTopOpenColumnIndex(null)}
-            />
-          ) : (
-            <SummaryView
-              title={result.name}
-              formulaStr={result.isRange ? result.formulaStr : undefined}
-              rows={topSummaryRows}
-              onSelect={setTopOpenColumnIndex}
-            />
-          )
-        )}
       </div>
     </div>
   );
-}
-
-const codeStyle = {
-  fontSize: 12.5,
-};
-
-// Tab characters land at fixed tab-stop widths in a plain text viewer
-// (Notepad and the like) — they don't widen to fit each column's actual
-// content, so rows with differently-sized values drift out of vertical
-// alignment with the header. Padding every cell to its column's own widest
-// value with spaces instead keeps the table aligned in any monospace
-// viewer, tab settings notwithstanding.
-function padCell(text, width, align) {
-  const pad = " ".repeat(Math.max(0, width - text.length));
-  return align === "left" ? text + pad : pad + text;
-}
-
-// Renders one flat (single-composition) analyze() result as the same
-// information DetailedView shows on screen — name, formula, formula mass,
-// net charge, and the full element/valence/count/mass/% table — as plain,
-// space-aligned text.
-function formatDetailText(result) {
-  const headers = ["Element", "Valence", "Count", "Atomic mass (g/mol)", "Total mass (g/mol)", "% of mass"];
-  const dataRows = result.atoms.map((a) => [
-    a.symbol + (a.known === false ? " (unknown)" : ""),
-    valenceLabel(a),
-    a.count.toFixed(3),
-    a.weight ? a.weight.toFixed(3) : "—",
-    a.totalMass.toFixed(3),
-    a.percent.toFixed(3),
-  ]);
-  const totalRow = ["Total", "", "", "", result.totalMass.toFixed(3), "100.000"];
-  const colWidths = headers.map((h, col) =>
-    Math.max(h.length, ...dataRows.map((r) => r[col].length), totalRow[col].length)
-  );
-  const formatRow = (row) =>
-    row.map((cell, col) => padCell(cell, colWidths[col], col === 0 ? "left" : "right")).join("  ");
-
-  const lines = [];
-  lines.push(result.name ? `${result.name}, ${result.formulaStr}` : result.formulaStr);
-  lines.push(`Valence Formula: ${result.formulaStr}`);
-  lines.push(`Formula mass: ${result.totalMass.toFixed(3)} g/mol`);
-  lines.push(`Net charge: ${result.netCharge.toFixed(3)}`);
-  lines.push("");
-  lines.push(formatRow(headers));
-  for (const row of dataRows) lines.push(formatRow(row));
-  lines.push(formatRow(totalRow));
-  return lines.join("\n");
 }
 
 // A batch row that's a Type 1/2 range (or the new comma site-sharing split)
@@ -1563,23 +1552,6 @@ function formatMineralDetailText(r) {
     ].join("\n");
   }
   return formatDetailText(r.result);
-}
-
-// Shared by every plain-text export below. A leading UTF-8 BOM so Windows
-// text viewers (Notepad etc.), which otherwise guess the file's encoding,
-// reliably detect UTF-8 instead of falling back to the system ANSI
-// codepage — without it, any non-ASCII character (the '—' placeholder for
-// an unrecognized element's unknown atomic mass, an accented mineral name
-// like 'Achávalite') can render as blank or garbled instead of the actual
-// character.
-function downloadTxt(content, filename) {
-  const blob = new Blob(["﻿" + content], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function printSelectedTxt(rows, filename) {
@@ -1732,8 +1704,9 @@ const BatchTable = memo(function BatchTable({ rows, onRowClick, selectedIds, onT
                       {r.result.columns[1].totalMass.toFixed(3)} g/mol
                     </td>
                     <td style={tdStyle}>
-                      {r.result.columns[0].netCharge.toFixed(3)}–
-                      {r.result.columns[1].netCharge.toFixed(3)}
+                      {r.result.columns[0].isMetallic
+                        ? "—"
+                        : `${r.result.columns[0].netCharge.toFixed(3)}–${r.result.columns[1].netCharge.toFixed(3)}`}
                     </td>
                   </>
                 ) : (
@@ -1742,10 +1715,13 @@ const BatchTable = memo(function BatchTable({ rows, onRowClick, selectedIds, onT
                     <td
                       style={{
                         ...tdStyle,
-                        color: Math.abs(r.result.netCharge) > 0.001 ? COLORS.warn : COLORS.text,
+                        color:
+                          !r.result.isMetallic && Math.abs(r.result.netCharge) > 0.001
+                            ? COLORS.warn
+                            : COLORS.text,
                       }}
                     >
-                      {r.result.netCharge.toFixed(3)}
+                      {r.result.isMetallic ? "—" : r.result.netCharge.toFixed(3)}
                     </td>
                   </>
                 )}

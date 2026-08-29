@@ -1,8 +1,9 @@
 import React, { memo, useMemo } from "react";
-import { COLORS, renderFormula } from "./shared.jsx";
+import { COLORS, renderFormula, backButtonStyle } from "./shared.jsx";
 import DetailedView from "./DetailedView.jsx";
+import { formatDetailText, downloadTxt } from "./reportText.js";
 
-const backButtonStyle = {
+const downloadButtonStyle = {
   background: COLORS.panelAlt,
   border: `1px solid ${COLORS.border}`,
   color: COLORS.text,
@@ -11,6 +12,19 @@ const backButtonStyle = {
   fontSize: 12.5,
   cursor: "pointer",
 };
+
+// Builds the same plain-text report a batch "Print Report" row gets, but for
+// this one mineral — one section per row (two, "(1)"/"(2)", for a range
+// formula) — and triggers the download. Each row's `result` only carries a
+// `name` when it came straight from analyze() (the non-range case); a
+// range's per-column result doesn't, so it's filled in from `title` here.
+function downloadMineralReport(title, rows) {
+  const content = rows
+    .map((r) => formatDetailText({ ...r.result, name: r.result.name || title }))
+    .join("\n\n" + "=".repeat(60) + "\n\n");
+  const safeName = (title || "mineral").replace(/[^\w.-]+/g, "_");
+  downloadTxt(content, `${safeName}.txt`);
+}
 
 function summaryThStyle(align) {
   return {
@@ -57,6 +71,52 @@ const summaryKeyBtnStyle = {
   cursor: "pointer",
 };
 
+// The mineral name + formatted formula + raw "Valence Formula: ..." line
+// shown above a summary table — also used on its own (e.g. Page 1's error
+// state) so a formula that failed to parse still displays what was typed
+// instead of disappearing along with the table.
+export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, onBack }) {
+  if (!title && !formulaStr && !onBack) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: onBack ? "space-between" : "center",
+        gap: 12,
+        marginBottom: 14,
+      }}
+    >
+      <div style={onBack ? { maxWidth: 480 } : { textAlign: "center", maxWidth: 480 }}>
+        {title && (
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
+            {title}
+            {formulaStr && ", "}
+            {formulaStr && renderFormula(formulaStr)}
+          </div>
+        )}
+        {formulaStr && (
+          <div
+            style={{
+              fontFamily: COLORS.mono,
+              fontSize: 15,
+              color: COLORS.textDim,
+              wordBreak: "break-all",
+            }}
+          >
+            Valence Formula: {formulaStr}
+          </div>
+        )}
+      </div>
+      {onBack && (
+        <button onClick={onBack} style={{ ...backButtonStyle, flexShrink: 0 }}>
+          ← Back to list
+        </button>
+      )}
+    </div>
+  );
+});
+
 // Shows the union of elements across a set of formulas as rows, with one
 // percent-of-mass column per formula (labeled (1), (2), ...). A formula
 // missing an element that another has just gets a blank cell rather than a
@@ -80,6 +140,11 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
     return order;
   }, [rows]);
 
+  // Native metals (e.g. Cu, Au) aren't ionic — a "net charge" is meaningless
+  // for them, so it's hidden and only atomic weight percents are shown. See
+  // isMetallicFormula in MineralFormulaParser.jsx.
+  const isMetallic = rows.every((r) => r.result.isMetallic);
+
   if (rows.length === 0) {
     return (
       <div style={{ marginTop: 14, padding: 16, color: COLORS.textDim, fontSize: 13 }}>
@@ -90,44 +155,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 
   return (
     <div style={{ marginTop: 14 }}>
-      {(title || formulaStr || onBack) && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: onBack ? "space-between" : "center",
-            gap: 12,
-            marginBottom: 14,
-          }}
-        >
-          <div style={onBack ? { maxWidth: 480 } : { textAlign: "center", maxWidth: 480 }}>
-            {title && (
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
-                {title}
-                {formulaStr && ", "}
-                {formulaStr && renderFormula(formulaStr)}
-              </div>
-            )}
-            {formulaStr && (
-              <div
-                style={{
-                  fontFamily: COLORS.mono,
-                  fontSize: 15,
-                  color: COLORS.textDim,
-                  wordBreak: "break-all",
-                }}
-              >
-                Valence Formula: {formulaStr}
-              </div>
-            )}
-          </div>
-          {onBack && (
-            <button onClick={onBack} style={{ ...backButtonStyle, flexShrink: 0 }}>
-              ← Back to list
-            </button>
-          )}
-        </div>
-      )}
+      <FormulaHeader title={title} formulaStr={formulaStr} onBack={onBack} />
       <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", maxWidth: 360, margin: "0 auto" }}>
         <div style={{ maxHeight: 420, overflow: "auto", transform: "translateZ(0)" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13.5 }}>
@@ -176,15 +204,42 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
               ))}
             </tbody>
             <tfoot>
+              {!isMetallic && (
+                <tr>
+                  <td
+                    style={{
+                      ...summaryTdStyle,
+                      fontWeight: 700,
+                      borderTop: `2.5px solid ${COLORS.textDim}`,
+                    }}
+                  >
+                    Net charge
+                  </td>
+                  {rows.map((r, idx) => (
+                    <td
+                      key={idx}
+                      style={{
+                        ...summaryTdStyle,
+                        fontWeight: 700,
+                        borderTop: `2.5px solid ${COLORS.textDim}`,
+                        color: Math.abs(r.result.netCharge) > 0.001 ? COLORS.warn : undefined,
+                      }}
+                    >
+                      {r.result.netCharge.toFixed(3)}
+                    </td>
+                  ))}
+                </tr>
+              )}
               <tr>
                 <td
                   style={{
                     ...summaryTdStyle,
                     fontWeight: 700,
-                    borderTop: `2.5px solid ${COLORS.textDim}`,
+                    borderTop: isMetallic ? `2.5px solid ${COLORS.textDim}` : "none",
+                    borderBottom: "none",
                   }}
                 >
-                  Net charge
+                  Formula mass
                 </td>
                 {rows.map((r, idx) => (
                   <td
@@ -192,20 +247,10 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                     style={{
                       ...summaryTdStyle,
                       fontWeight: 700,
-                      borderTop: `2.5px solid ${COLORS.textDim}`,
-                      color: Math.abs(r.result.netCharge) > 0.001 ? COLORS.warn : undefined,
+                      borderTop: isMetallic ? `2.5px solid ${COLORS.textDim}` : "none",
+                      borderBottom: "none",
                     }}
                   >
-                    {r.result.netCharge.toFixed(3)}
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <td style={{ ...summaryTdStyle, fontWeight: 700, borderBottom: "none" }}>
-                  Formula mass
-                </td>
-                {rows.map((r, idx) => (
-                  <td key={idx} style={{ ...summaryTdStyle, fontWeight: 700, borderBottom: "none" }}>
                     {r.result.totalMass.toFixed(3)} g/mol
                   </td>
                 ))}
@@ -224,6 +269,12 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
             <span style={{ fontFamily: COLORS.mono }}>{renderFormula(r.formulaStr)}</span>
           </div>
         ))}
+      </div>
+
+      <div style={{ marginTop: 18, textAlign: "right" }}>
+        <button onClick={() => downloadMineralReport(title, rows)} style={downloadButtonStyle}>
+          Print Report (.txt)
+        </button>
       </div>
     </div>
   );
