@@ -3,6 +3,7 @@ import { loadMineralsFromFile, loadMineralsFromApi } from "./mineralDataSources.
 import { COLORS, tdStyle, renderFormula, backButtonStyle } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
+import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
 
 // ---------------------------------------------------------------------------
 // Element data: symbol -> { weight, valences: [default, ...alternates] }
@@ -19,7 +20,7 @@ const ELEMENTS = {
   Be: { weight: 9.012182, valences: [2] },
   B: { weight: 10.811, valences: [3] },
   C: { weight: 12.011, valences: [4] },
-  N: { weight: 14.00674, valences: [5, -3] },
+  N: { weight: 14.00674, valences: [-3, 5] },
   O: { weight: 15.9994, valences: [-2] },
   F: { weight: 18.9984032, valences: [-1] },
   Ne: { weight: 20.1797, valences: [0] },
@@ -28,7 +29,7 @@ const ELEMENTS = {
   Al: { weight: 26.981539, valences: [3] },
   Si: { weight: 28.0855, valences: [4] },
   P: { weight: 30.973762, valences: [5] },
-  S: { weight: 32.066, valences: [6, -2] },
+  S: { weight: 32.066, valences: [-2, 6] },
   Cl: { weight: 35.4527, valences: [-1, 7] },
   Ar: { weight: 39.948, valences: [0] },
   K: { weight: 39.0983, valences: [1] },
@@ -41,12 +42,12 @@ const ELEMENTS = {
   Fe: { weight: 55.847, valences: [3, 2, 4] },
   Co: { weight: 58.9332, valences: [2, 3, 4] },
   Ni: { weight: 58.69, valences: [2, 3, 1, 4] },
-  Cu: { weight: 63.546, valences: [2, 1] },
+  Cu: { weight: 63.546, valences: [1, 2] },
   Zn: { weight: 65.39, valences: [2] },
   Ga: { weight: 69.723, valences: [3] },
   Ge: { weight: 72.61, valences: [4] },
-  As: { weight: 74.92159, valences: [5, 3, 2, -3] },
-  Se: { weight: 78.96, valences: [6, -2] },
+  As: { weight: 74.92159, valences: [-3, 5, 3, 2] },
+  Se: { weight: 78.96, valences: [-2, 6] },
   Br: { weight: 79.904, valences: [-1] },
   Kr: { weight: 83.8, valences: [0] },
   Rb: { weight: 85.4678, valences: [1] },
@@ -62,9 +63,9 @@ const ELEMENTS = {
   Ag: { weight: 107.8682, valences: [1, 2, 3] },
   Cd: { weight: 112.411, valences: [2, 1] },
   In: { weight: 114.82, valences: [3, 2, 1] },
-  Sn: { weight: 118.71, valences: [4, 2] },
+  Sn: { weight: 118.71, valences: [2, 4] },
   Sb: { weight: 121.75, valences: [3, 5, -3, 4] },
-  Te: { weight: 127.6, valences: [4, 6, -2, 2] },
+  Te: { weight: 127.6, valences: [-2, 4, 6, 2] },
   I: { weight: 126.90447, valences: [-1, 5, 7] },
   Xe: { weight: 131.29, valences: [0] },
   Cs: { weight: 132.90543, valences: [1] },
@@ -75,7 +76,7 @@ const ELEMENTS = {
   Pr: { weight: 140.90765, valences: [3] },
   Nd: { weight: 144.24, valences: [3, 4] },
   Pm: { weight: 145, valences: [3] },
-  Sm: { weight: 150.36, valences: [2, 3] },
+  Sm: { weight: 150.36, valences: [3, 2] },
   Eu: { weight: 151.965, valences: [2, 3] },
   Gd: { weight: 157.25, valences: [3] },
   Tb: { weight: 158.92534, valences: [3, 4] },
@@ -83,7 +84,7 @@ const ELEMENTS = {
   Ho: { weight: 164.93032, valences: [3] },
   Er: { weight: 167.26, valences: [3] },
   Tm: { weight: 168.93421, valences: [2, 3] },
-  Yb: { weight: 173.04, valences: [2, 3] },
+  Yb: { weight: 173.04, valences: [3, 2] },
   Lu: { weight: 174.967, valences: [3] },
   Hf: { weight: 178.49, valences: [4] },
   Ta: { weight: 180.9479, valences: [5, 4, 3] },
@@ -224,15 +225,10 @@ function findAlgebraicSubscripts(str) {
 //     bound defaults to 0 — these are always non-negative
 //     substitution/occupancy fractions in this domain;
 //   - a single approximate/exact value, 'x ~ 0.5', 'x ≈ 0.4', 'x = 0.43'.
-// A strict '<' or '>' is deliberately NOT treated the same as its
-// closed-interval sibling ('≤'/'≥'): evaluating the formula exactly at the
-// bound's own endpoint — which is how a resolved bound gets turned into
-// "column 1"/"column 2" everywhere downstream — is correct for a closed
-// interval but wrong for an open one, since the true composition never
-// actually reaches that value. Reported as its own 'strict_inequality' kind
-// (carrying which operator was found) so the caller can refuse it outright
-// rather than silently computing a column that doesn't represent a real
-// end-member.
+// A strict '<' or '>' is treated exactly the same as its closed-interval
+// sibling ('≤'/'≥') — '<' resolves a bound the same way '≤' does, and '>'
+// is left unresolved the same way '≥' already is (see the one-sided lower
+// bound note below).
 // Anything else — the variable mentioned with no parseable bound nearby, or
 // one mangled by a transcription typo like '0.4-0-8' or '0 ≤ x << 2' — is
 // reported as 'malformed' or 'not_found' rather than guessed at.
@@ -250,7 +246,6 @@ function findVariableBounds(str, varName) {
 
   let m = str.match(new RegExp(`(${NUM})\\s*${DBL_OP}\\s*\\b${varName}\\b\\s*${DBL_OP}\\s*(${NUM})${TERM}`));
   if (m) {
-    if (m[2] === "<" || m[3] === "<") return { kind: "strict_inequality", op: "<" };
     return { kind: "range", low: parseNum(m[1]), high: parseNum(m[4]) };
   }
 
@@ -259,19 +254,15 @@ function findVariableBounds(str, varName) {
 
   m = str.match(new RegExp(`\\b${varName}\\b\\s*([<≤≦])\\s*(${NUM})${TERM}`));
   if (m) {
-    if (m[1] === "<") return { kind: "strict_inequality", op: "<" };
     return { kind: "range", low: 0, high: parseNum(m[2]) };
   }
 
   // A lower-only bound ('x > 0.5' / 'x ≥ 0.5') has no natural default upper
-  // bound the way a upper-only bound's missing lower end defaults to 0 —
+  // bound the way an upper-only bound's missing lower end defaults to 0 —
   // there's no sense in which an occupancy/substitution fraction in this
   // domain has an obvious ceiling, so it can't be resolved into a range
-  // either way. A strict '>' additionally has the same open-interval
-  // problem as strict '<' above, so it gets its own clear message rather
-  // than folding into the generic 'malformed' catch-all below.
-  m = str.match(new RegExp(`\\b${varName}\\b\\s*(>)\\s*(${NUM})${TERM}`));
-  if (m) return { kind: "strict_inequality", op: ">" };
+  // either way, whether written with '>' or '≥'. Left unmatched here so it
+  // falls through to the generic 'malformed'/'not_found' handling below.
 
   m = str.match(new RegExp(`\\b${varName}\\b\\s*[~≈=]\\s*(${NUM})${TERM}`));
   if (m) return { kind: "point", value: parseNum(m[1]) };
@@ -403,12 +394,6 @@ function parseFormula(str) {
           `Found what looks like a bound on '${varName}' in the formula, but couldn't parse it into a clean range or value. Not supported.`
         );
       }
-      if (bounds.kind === "strict_inequality") {
-        const closed = bounds.op === "<" ? "≤" : "≥";
-        throw new Error(
-          `Bound on '${varName}' uses a strict '${bounds.op}' rather than '${closed}' — evaluating a column exactly at that endpoint isn't valid for an open interval, since the formula never actually reaches it. Not supported.`
-        );
-      }
       resolvedVar = bounds;
     }
   }
@@ -453,19 +438,27 @@ function parseFormula(str) {
         `Range subscript '_${raw}_' at position ${i} is not supported yet.`
       );
     }
-    const val = parseFloat(raw);
+    // A plain fraction like '1/3' or '7/3' (no variable, no dash) — parseNum
+    // resolves it to its decimal value; without this, parseFloat("1/3")
+    // would silently read only the "1" and drop the "/3" entirely.
+    const val = parseNum(raw);
     i = end + 1;
     return isNaN(val) ? 1 : val;
   }
 
   function readValence() {
     if (str[i] !== "^") return null;
+    const start = i;
     const end = str.indexOf("^", i + 1);
     if (end === -1) throw new Error(`Unterminated '^' valence at position ${i}`);
     const raw = str.slice(i + 1, end);
     i = end + 1;
-    const m = raw.match(/^(\d+)\s*([+-]?)$/);
-    if (!m) return null;
+    const m = raw.match(/^(\d+)\s*([+-])$/);
+    if (!m) {
+      throw new Error(
+        `Valence '^${raw}^' at position ${start} is missing its required trailing + or - sign (e.g. '^2+^' or '^3-^').`
+      );
+    }
     const num = parseInt(m[1], 10);
     return m[2] === "-" ? -num : num;
   }
@@ -828,58 +821,170 @@ function tryChargeBalanceSplit(formulaStr, group, parsedTokens) {
   return formulaStr.slice(0, openIdx) + replacement + formulaStr.slice(afterGroup);
 }
 
-function expandCommaGroup(formulaStr) {
-  const groups = commaGroups(formulaStr);
-  if (groups.length === 0) return formulaStr;
-  if (groups.length > 1) {
-    throw new Error(
-      "More than one comma isn't inside a single set of parentheses — e.g. '(Fe,Mg)(Ca,Na)' has two separate comma groups, and a bare comma next to a bracketed group is ambiguous the same way. Only one '(A,B,...)' site-sharing group is supported per formula."
-    );
+// Parses one comma-separated occupant. A bare element symbol (optionally
+// with its own explicit valence, e.g. 'Fe' or 'Pb^2+^') is the common case.
+// Anything else is tried as a self-contained multi-atom fragment instead —
+// e.g. 'N^3-^H_4_' for ammonium, or 'OH' for hydroxide — using the same
+// grammar the rest of the formula parses with, so a comma-shared site can
+// list a complex ion as one of its candidates. isComplex marks that case,
+// since it changes how the token can be substituted back into the formula
+// (see collapseMultipleCommaGroupsToLeftmost).
+function parseCommaToken(raw, inner) {
+  const m = raw.match(COMMA_TOKEN_RE);
+  if (m) {
+    const symbol = m[1];
+    const explicitValence = m[2] ? (m[3] === "-" ? -parseInt(m[2], 10) : parseInt(m[2], 10)) : null;
+    // The set used for tryChargeBalanceSplit's charge-balance solve, which
+    // needs a single definite valence per token: just the explicit one if
+    // it wrote one, otherwise every valence the element is known to take
+    // (which only pins one down when the element has just a single
+    // possibility to begin with, e.g. Al).
+    const valenceSet =
+      explicitValence !== null ? [explicitValence] : ELEMENTS[symbol] ? ELEMENTS[symbol].valences : null;
+    // The set used for the "is this a plausible shared site" compatibility
+    // check below: always every valence the element can take, even when
+    // this token wrote an explicit one. An explicit '^3+^' on Fe pins down
+    // what Fe actually is *if it's the one kept*, but a group like
+    // '(Fe^3+^,Mg)' is still a real shared site — Fe can be 2+, matching
+    // Mg — so narrowing to just the written valence here would reject
+    // pairings the element could plausibly support.
+    const fullValenceSet = ELEMENTS[symbol] ? ELEMENTS[symbol].valences : null;
+    return { raw, symbol, valenceSet, fullValenceSet, isComplex: false };
   }
 
-  const { start, end, commaIdxs } = groups[0];
-  const inner = formulaStr.slice(start, end);
+  // Not a bare element symbol — try it as a fragment on its own. Its
+  // "valence" for the compatibility check is just its own net charge as a
+  // complex ion (e.g. NH4 -> -3 + 4×1 = +1) — there's no list of alternate
+  // possibilities the way a bare element has, just the one value its own
+  // explicit valences (or defaults) resolve to.
+  let netCharge;
+  try {
+    netCharge = netChargeOfFragment(raw);
+  } catch (e) {
+    throw new Error(
+      `'${raw}' in the comma group '${inner}' isn't a single element symbol (with an optional '^n+^' valence), and doesn't parse as a group on its own either: ${e.message}`
+    );
+  }
+  return { raw, symbol: raw, valenceSet: [netCharge], fullValenceSet: [netCharge], isComplex: true };
+}
+
+// Splits one comma group's raw inner text (e.g. 'Fe,Mg' from '(Fe,Mg)')
+// into parsed tokens — shared by both the single-group range expansion
+// below and the multi-group leftmost-pick collapse.
+function parseCommaTokens(inner) {
   const tokens = inner.split(",");
   if (tokens.some((t) => !t)) {
     throw new Error(`Empty element between commas in '${inner}' — check for a stray or doubled comma.`);
   }
+  return tokens.map((raw) => parseCommaToken(raw, inner));
+}
 
-  const parsedTokens = tokens.map((raw) => {
-    const m = raw.match(COMMA_TOKEN_RE);
-    if (!m) {
+// True when every occupant of a comma group is a bare element symbol
+// (optionally with its own explicit valence) — the only shape the
+// single-group numeric-range split can work with, since splitting appends a
+// fresh trailing subscript directly onto each token; a multi-atom occupant
+// already has its own subscript notation baked in.
+function isSimpleCommaGroup(formulaStr, group) {
+  const inner = formulaStr.slice(group.start, group.end);
+  return inner.split(",").every((raw) => COMMA_TOKEN_RE.test(raw));
+}
+
+// True if every token in a comma group could plausibly carry the same
+// valence (their fullValenceSets overlap) — the "shared site" requirement a
+// comma group needs to be resolved without an arbitrary guess. A token with
+// no known valence (an unrecognized element) doesn't rule anything out on
+// its own, same as everywhere else in this file.
+function commaGroupHasCommonValence(parsedTokens) {
+  const knownSets = parsedTokens.map((t) => t.fullValenceSet).filter(Boolean);
+  if (knownSets.length < 2) return true;
+  const common = knownSets.reduce((acc, s) => acc.filter((v) => s.includes(v)));
+  return common.length > 0;
+}
+
+// A comma-separated site collapses to one flat "modified ideal formula"
+// rather than the numeric-range split a single simple group gets — either
+// because there's more than one such site in the formula (e.g.
+// '(Fe,Mg)(Ca,Na)', which has no telling how the two sites' occupancies
+// should pair up), or because a site lists a multi-atom occupant (e.g.
+// '(N^3-^H_4_,K,Na)', which can't be split by a trailing subscript the way
+// a bare element can). When every group is internally same-valence, the
+// leftmost (first-listed, i.e. dominant) occupant in each group stands in
+// for the whole site, and the rest of that group's parentheses is dropped.
+// A group that isn't internally same-valence can't be resolved this way, so
+// the whole formula is rejected rather than guessed at.
+function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, ignoreValenceCheck) {
+  // Right-to-left so each earlier group's start/end offsets stay valid as
+  // later (rightward) groups get replaced first.
+  const sorted = [...groups].sort((a, b) => b.start - a.start);
+  let result = formulaStr;
+  for (const { start, end } of sorted) {
+    const inner = result.slice(start, end);
+    const parsedTokens = parseCommaTokens(inner);
+    if (!ignoreValenceCheck && !commaGroupHasCommonValence(parsedTokens)) {
       throw new Error(
-        `'${raw}' in the comma group '${inner}' isn't a single element symbol (with an optional '^n+^' valence) — that's the only form supported in a comma-separated site.`
+        `Cannot compute: the comma group '${inner}' doesn't have the same valence across its elements (${parsedTokens
+          .map((t) => `${t.symbol} [${(t.fullValenceSet || []).join(", ")}]`)
+          .join(", ")}). With more than one comma-separated site in the formula, every site's elements need to share a valence to reduce it to a single modified ideal formula.`
       );
     }
-    const symbol = m[1];
-    const explicitValence = m[2] ? (m[3] === "-" ? -parseInt(m[2], 10) : parseInt(m[2], 10)) : null;
-    // The set of valences this token could plausibly carry: just the
-    // explicit one if it wrote one, otherwise every valence the element is
-    // known to take — matched against its neighbors below on overlap, not
-    // on any single "default" pick, since which valence actually applies
-    // isn't decided until resolveAtom runs later.
-    const valenceSet =
-      explicitValence !== null ? [explicitValence] : ELEMENTS[symbol] ? ELEMENTS[symbol].valences : null;
-    return { raw, symbol, valenceSet };
-  });
+    const leftmost = parsedTokens[0];
+    // A bare element's own trailing subscript is read directly after the
+    // symbol, so the group's wrapping bracket can be dropped along with the
+    // rest of the comma list — e.g. '(Fe,Mg)_2_' collapses to 'Fe_2_'
+    // rather than leaving a redundant '(Fe)_2_' behind. A multi-atom
+    // occupant already carries its own subscript notation, so the bracket
+    // has to stay: it's what lets a trailing count right after the group
+    // (the '_9_' in '(N^3-^H_4_,...)_9_') still apply to the whole kept
+    // fragment instead of being silently dropped as stray text.
+    const openIdx = start - 1;
+    const hasBracket = openIdx >= 0 && "([{".includes(result[openIdx]);
+    const stripBracket = hasBracket && !leftmost.isComplex;
+    const spanStart = stripBracket ? openIdx : start;
+    const spanEnd = stripBracket ? end + 1 : end;
+    result = result.slice(0, spanStart) + leftmost.raw + result.slice(spanEnd);
+  }
+  return result;
+}
+
+// Rewrites a formula's comma-separated site-sharing group(s) — see
+// commaGroups above — into syntax the rest of the pipeline already
+// understands, before the real parse starts. Returns { formulaStr,
+// isModifiedIdeal }: isModifiedIdeal flags a result that came from the
+// multi-group leftmost-pick collapse rather than the formula the user
+// actually typed, so the UI can label it as such. ignoreValenceCheck is a
+// manual override (see the "ignore valence" toggle in the UI) that skips
+// the same-valence requirement entirely, always taking the leftmost
+// occupant regardless of whether the group's elements are compatible.
+function expandCommaGroup(formulaStr, ignoreValenceCheck = false) {
+  const groups = commaGroups(formulaStr);
+  if (groups.length === 0) return { formulaStr, isModifiedIdeal: false };
+  // The numeric-range split below only works when there's exactly one
+  // comma group and every occupant in it is a bare element symbol — see
+  // isSimpleCommaGroup and collapseMultipleCommaGroupsToLeftmost.
+  if (groups.length > 1 || !isSimpleCommaGroup(formulaStr, groups[0])) {
+    return {
+      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, ignoreValenceCheck),
+      isModifiedIdeal: true,
+    };
+  }
+
+  const { start, end } = groups[0];
+  const inner = formulaStr.slice(start, end);
+  const parsedTokens = parseCommaTokens(inner);
 
   // A heterovalent site (different valences per element, like Si/Al) can
   // have a single charge-balanced split instead of an arbitrary range — try
   // that first, and only fall through to the generic split/validation below
   // if no unique valid solution exists.
   const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens);
-  if (balanced !== null) return balanced;
+  if (balanced !== null) return { formulaStr: balanced, isModifiedIdeal: false };
 
-  const knownSets = parsedTokens.map((t) => t.valenceSet).filter(Boolean);
-  if (knownSets.length >= 2) {
-    const common = knownSets.reduce((acc, s) => acc.filter((v) => s.includes(v)));
-    if (common.length === 0) {
-      throw new Error(
-        `Comma issue: not same valence — '${inner}' has no valence in common (${parsedTokens
-          .map((t) => `${t.symbol} [${(t.valenceSet || []).join(", ")}]`)
-          .join(", ")}); a shared site needs every element to be able to carry the same charge.`
-      );
-    }
+  if (!ignoreValenceCheck && !commaGroupHasCommonValence(parsedTokens)) {
+    throw new Error(
+      `Comma issue: not same valence — '${inner}' has no valence in common (${parsedTokens
+        .map((t) => `${t.symbol} [${(t.fullValenceSet || []).join(", ")}]`)
+        .join(", ")}); a shared site needs every element to be able to carry the same charge.`
+    );
   }
 
   const shareCount = parsedTokens.length - 1;
@@ -887,7 +992,7 @@ function expandCommaGroup(formulaStr) {
   const expanded = parsedTokens
     .map((t, idx) => (idx === 0 ? `${t.raw}_1-0.5_` : `${t.raw}_0-${otherHigh}_`))
     .join("");
-  return formulaStr.slice(0, start) + expanded + formulaStr.slice(end);
+  return { formulaStr: formulaStr.slice(0, start) + expanded + formulaStr.slice(end), isModifiedIdeal: false };
 }
 
 // Parses and computes one concrete formula string — no name attached, no
@@ -936,7 +1041,9 @@ function analyzeOne(formulaStr) {
   };
 }
 
-export function analyze(rawInput) {
+// ignoreCommaValenceCheck is a manual override (the "ignore valence" toggle
+// in the Custom Formula UI) — see expandCommaGroup.
+export function analyze(rawInput, { ignoreCommaValenceCheck = false } = {}) {
   // Allow "Name<TAB>Formula" pasted straight from the source list.
   const parts = rawInput.split("\t");
   const name = parts.length > 1 ? parts[0].trim() : "";
@@ -948,10 +1055,12 @@ export function analyze(rawInput) {
   // expandCommaGroup — so it flows through the same Type 1 range machinery
   // as any other range formula from here on. Left as the original text (and
   // whatever "not supported" error parseFormula's own comma handling throws
-  // for the ',REE' case) if there's no plain comma to expand.
-  formulaStr = expandCommaGroup(formulaStr);
+  // for the ',REE' case) if there's no plain comma to expand. More than one
+  // comma group instead collapses to a single leftmost-element-per-group
+  // "modified ideal formula" — isModifiedIdeal flags that for the UI.
+  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(formulaStr, ignoreCommaValenceCheck);
 
-  return { name, ...analyzeOne(formulaStr) };
+  return { name, isModifiedIdeal, ...analyzeOne(expandedFormulaStr) };
 }
 
 // Picks out a single end-member column from a ranged analyze() result and
@@ -963,6 +1072,7 @@ export function pickColumn(result, idx) {
   const col = result.columns[idx];
   return {
     name: result.name,
+    isModifiedIdeal: result.isModifiedIdeal,
     formulaStr: col.formulaStr,
     isRange: false,
     atoms: col.atoms,
@@ -970,6 +1080,69 @@ export function pickColumn(result, idx) {
     netCharge: col.netCharge,
     isMetallic: col.isMetallic,
   };
+}
+
+// Finds where each unknown element symbol sits in the raw formula text, so
+// the editor can highlight just that text instead of the whole box. Walks
+// the string with the same element-symbol tokenizing rules parseTerms uses
+// (skipping 'box' and standalone 'REE' the same way) rather than reusing
+// positions from the real parse, since expandCommaGroup can rewrite the
+// string it hands to parseFormula — a comma-expanded position wouldn't line
+// up with what the user actually typed in the box. Whether a symbol is
+// "unknown" only depends on the symbol text itself (is it in ELEMENTS,
+// modulo the 'box'/'REE' special cases), not where it appears, so scanning
+// the original text separately and matching by symbol name is safe.
+function findUnknownElementSpans(text, unknownSymbols) {
+  if (!unknownSymbols || unknownSymbols.size === 0) return [];
+  const spans = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    if (text.slice(i, i + 3).toLowerCase() === "box") {
+      i += 3;
+      continue;
+    }
+    if (text.slice(i, i + 3) === "REE" && !/[a-z]/.test(text[i + 3] || "")) {
+      i += 3;
+      continue;
+    }
+    if (/[A-Z]/.test(text[i])) {
+      let j = i + 1;
+      while (j < n && /[a-z]/.test(text[j])) j++;
+      const symbol = text.slice(i, j);
+      if (unknownSymbols.has(symbol)) spans.push({ start: i, end: j });
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return spans;
+}
+
+// Splits formula text into plain-text / highlighted-span pieces for the
+// overlay backdrop, given the spans findUnknownElementSpans found.
+function renderWithHighlights(text, spans) {
+  if (spans.length === 0) return text;
+  const nodes = [];
+  let last = 0;
+  spans.forEach((s, idx) => {
+    if (s.start > last) nodes.push(text.slice(last, s.start));
+    nodes.push(
+      <mark
+        key={idx}
+        style={{
+          background: "#fbeee5",
+          color: COLORS.warn,
+          borderRadius: 3,
+        }}
+      >
+        {text.slice(s.start, s.end)}
+      </mark>
+    );
+    last = s.end;
+  });
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
 }
 
 // ---------------------------------------------------------------------------
@@ -1021,15 +1194,59 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   // typed formula and any mineral picked from the batch list below).
   const [topOpenColumnIndex, setTopOpenColumnIndex] = useState(null);
 
+  // Manual override for the comma-group "same valence" requirement — see
+  // expandCommaGroup. Off by default so the check still catches genuinely
+  // incompatible sites; the checkbox near the formula box lets you force a
+  // leftmost-pick "modified ideal formula" through anyway.
+  const [ignoreCommaValenceCheck, setIgnoreCommaValenceCheck] = useState(false);
+
   const result = useMemo(() => {
     try {
       setError(null);
-      return analyze(input);
+      return analyze(input, { ignoreCommaValenceCheck });
     } catch (e) {
       setError(e.message);
       return null;
     }
-  }, [input]);
+  }, [input, ignoreCommaValenceCheck]);
+
+  // Every unrecognized element symbol the parsed formula contains. Only
+  // used to highlight those symbols in the formula textarea once the user
+  // clicks away from it (see formulaFocused below) — highlighting on every
+  // keystroke would flash the error color while a valid symbol is still
+  // half-typed.
+  const unknownSymbols = useMemo(() => {
+    const set = new Set();
+    if (!result) return set;
+    const atomLists = result.isRange
+      ? [result.columns[0].atoms, result.columns[1].atoms]
+      : [result.atoms];
+    atomLists.forEach((atoms) => atoms.forEach((a) => { if (a.known === false) set.add(a.symbol); }));
+    return set;
+  }, [result]);
+  const [formulaFocused, setFormulaFocused] = useState(false);
+  const formulaHighlightSpans = useMemo(
+    () => (formulaFocused ? [] : findUnknownElementSpans(formulaInput, unknownSymbols)),
+    [formulaInput, unknownSymbols, formulaFocused]
+  );
+  const formulaBackdropRef = useRef(null);
+
+  // Lets users paste a "plain" formula (e.g. "Ni2+C31H32N4", copied straight
+  // out of a paper) and have it converted into this app's "_2_" / "^2+^"
+  // syntax instead of typing the delimiters by hand. Ported from ODR's own
+  // chemistry-formatting plugin — see odrChemistryFormat.js. Refuses to run
+  // on a formula that already looks formatted, since the converter assumes
+  // plain input and mangles anything that already has delimiters in it.
+  const [plainFormulaNotice, setPlainFormulaNotice] = useState(null);
+  const convertPlainFormula = useCallback(() => {
+    if (!formulaInput.trim()) return;
+    if (isFormulaFormatted(formulaInput)) {
+      setPlainFormulaNotice("Formula already looks formatted — nothing to convert.");
+      return;
+    }
+    setFormulaInput(parseChemicalFormula(formulaInput));
+    setPlainFormulaNotice(null);
+  }, [formulaInput]);
 
   // A fresh formula should land back on the summary, not stay drilled into
   // whichever column the previous one had open.
@@ -1040,9 +1257,12 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   const topSummaryRows = useMemo(() => {
     if (!result) return null;
     if (!result.isRange) return [{ formulaStr: result.formulaStr, result }];
+    // A range column's own result doesn't carry isModifiedIdeal (that flag
+    // lives on the outer analyze() result) — copy it down so each row can
+    // still show the "modified ideal formula" label regardless of range.
     return [
-      { formulaStr: result.columns[0].formulaStr, result: result.columns[0] },
-      { formulaStr: result.columns[1].formulaStr, result: result.columns[1] },
+      { formulaStr: result.columns[0].formulaStr, result: { ...result.columns[0], isModifiedIdeal: result.isModifiedIdeal } },
+      { formulaStr: result.columns[1].formulaStr, result: { ...result.columns[1], isModifiedIdeal: result.isModifiedIdeal } },
     ];
   }, [result]);
 
@@ -1054,12 +1274,19 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
       // row for every character typed was the main source of filter lag.
       const searchText = `${row.name} ${row.formulaStr}`.toLowerCase();
       try {
-        return { id, name: row.name, formulaStr: row.formulaStr, result: analyze(`${row.name}\t${row.formulaStr}`), error: null, searchText };
+        return {
+          id,
+          name: row.name,
+          formulaStr: row.formulaStr,
+          result: analyze(`${row.name}\t${row.formulaStr}`, { ignoreCommaValenceCheck }),
+          error: null,
+          searchText,
+        };
       } catch (e) {
         return { id, name: row.name, formulaStr: row.formulaStr, result: null, error: e.message, searchText };
       }
     });
-  }, [batchRows]);
+  }, [batchRows, ignoreCommaValenceCheck]);
 
   // Debounced so filtering (and the BatchTable re-render it triggers) runs
   // once shortly after typing pauses, instead of on every keystroke.
@@ -1240,34 +1467,110 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
-            Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
-          </label>
-          <textarea
-            value={formulaInput}
-            onChange={(e) => setFormulaInput(e.target.value)}
-            rows={2}
-            spellCheck={false}
-            placeholder="Pb^2+^_2_(CO_3_)_2_(OH)"
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+            <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
+              Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
+            </label>
+            <button
+              type="button"
+              onClick={convertPlainFormula}
+              title="Converts a plain formula (e.g. Ni2+C31H32N4) into this app's _subscript_ / ^superscript^ syntax"
+              style={{ ...backButtonStyle, flexShrink: 0, padding: "4px 10px", fontSize: 11.5 }}
+            >
+              Convert plain formula
+            </button>
+          </div>
+          {plainFormulaNotice && (
+            <div style={{ color: COLORS.warn, fontSize: 11.5 }}>{plainFormulaNotice}</div>
+          )}
+          <div style={{ position: "relative" }}>
+            {/* Visible backdrop: renders the same text as the textarea below
+                it, with any unknown element symbols marked. Perfectly
+                overlaid so it reads as highlighting inside the box, since a
+                plain <textarea> can't style individual characters itself. */}
+            <div
+              ref={formulaBackdropRef}
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                inset: 0,
+                boxSizing: "border-box",
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 8,
+                background: COLORS.panel,
+                padding: "12px 14px",
+                color: COLORS.text,
+                fontFamily: COLORS.mono,
+                fontSize: 14.5,
+                lineHeight: 1.4,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            >
+              {renderWithHighlights(formulaInput, formulaHighlightSpans)}
+            </div>
+            <textarea
+              value={formulaInput}
+              onChange={(e) => {
+                setFormulaInput(e.target.value);
+                setPlainFormulaNotice(null);
+              }}
+              onFocus={() => setFormulaFocused(true)}
+              onBlur={() => setFormulaFocused(false)}
+              onScroll={(e) => {
+                if (formulaBackdropRef.current) {
+                  formulaBackdropRef.current.scrollTop = e.target.scrollTop;
+                  formulaBackdropRef.current.scrollLeft = e.target.scrollLeft;
+                }
+              }}
+              rows={2}
+              spellCheck={false}
+              placeholder="Pb^2+^_2_(CO_3_)_2_(OH)"
+              style={{
+                position: "relative",
+                zIndex: 1,
+                width: "100%",
+                boxSizing: "border-box",
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 8,
+                padding: "12px 14px",
+                color: "transparent",
+                caretColor: COLORS.text,
+                fontFamily: COLORS.mono,
+                fontSize: 14.5,
+                lineHeight: 1.4,
+                resize: "vertical",
+                outline: "none",
+              }}
+            />
+          </div>
+          <label
             style={{
-              width: "100%",
-              boxSizing: "border-box",
-              background: COLORS.panel,
-              border: `1px solid ${COLORS.border}`,
-              borderRadius: 8,
-              padding: "12px 14px",
-              color: COLORS.text,
-              fontFamily: COLORS.mono,
-              fontSize: 14.5,
-              resize: "vertical",
-              outline: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 6,
+              fontSize: 12,
+              color: COLORS.textDim,
+              cursor: "pointer",
             }}
-          />
+            title="Skips the same-valence requirement for comma-separated sites, always keeping the leftmost element regardless of whether the group's elements are chemically compatible."
+          >
+            <input
+              type="checkbox"
+              checked={ignoreCommaValenceCheck}
+              onChange={(e) => setIgnoreCommaValenceCheck(e.target.checked)}
+            />
+            Ignore valence mismatch in comma-separated sites (always use leftmost element)
+          </label>
         </div>
 
         {error && (
           <div style={{ marginTop: 18 }}>
-            <FormulaHeader title={nameInput} formulaStr={formulaInput} />
+            <FormulaHeader title={nameInput} formulaStr={formulaInput} showValenceLine={false} />
             <div
               style={{
                 padding: "12px 14px",
@@ -1289,6 +1592,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
             <SummaryDetail
               result={pickColumn(result, topOpenColumnIndex)}
               onBack={() => setTopOpenColumnIndex(null)}
+              showValenceLine={false}
             />
           ) : (
             <SummaryView
@@ -1296,10 +1600,17 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
               formulaStr={result.formulaStr}
               rows={topSummaryRows}
               onSelect={setTopOpenColumnIndex}
+              showValenceLine={false}
             />
           )
         )}
+      </div>
 
+      {/* The batch list gets its own, wider container than the rest of the
+          page — its rows carry much longer formula text than the single
+          name/formula inputs above ever need to, so it benefits from more
+          horizontal room than the 780px the rest of the page is capped at. */}
+      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
         <div
           style={{
             marginTop: 40,
@@ -1584,6 +1895,41 @@ function downloadErrorsTxt(rows, filename) {
 // the body table sitting below it).
 const BATCH_COL_WIDTHS = ["6%", "54%", "22%", "18%"];
 
+// A single cached canvas 2D context, reused for every row's text-width
+// measurement below — canvas.measureText() doesn't force a layout reflow
+// the way reading a real DOM element's width would, so this stays cheap
+// even across several thousand rows.
+let measureCtx = null;
+function getMeasureCtx() {
+  if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+  return measureCtx;
+}
+
+// Strips the '^...^'/'_..._' delimiters down to their plain characters for
+// width measurement. The real rendered <sup>/<sub> glyphs are smaller than
+// this measures them at, so the estimate is conservative — it may shrink a
+// row's font a little more than strictly necessary, but never leaves a row
+// too wide to fit (which is what would force it to wrap or clip).
+function plainFormulaText(str) {
+  return str.replace(/[_^]/g, "");
+}
+
+const BATCH_ROW_MAX_FONT_SIZE = 14.5;
+const BATCH_ROW_MIN_FONT_SIZE = 9;
+
+// Picks the largest font size, up to the max, at which `text` fits on one
+// line within `maxWidth` px — so a short formula keeps the normal size, and
+// a long one shrinks just enough to still land on a single line instead of
+// wrapping onto a second/third line of its own.
+function fitFontSize(text, maxWidth, fontWeight = 400) {
+  if (!maxWidth || !text) return BATCH_ROW_MAX_FONT_SIZE;
+  const ctx = getMeasureCtx();
+  ctx.font = `${fontWeight} ${BATCH_ROW_MAX_FONT_SIZE}px ${COLORS.mono}`;
+  const width = ctx.measureText(text).width;
+  if (width <= maxWidth) return BATCH_ROW_MAX_FONT_SIZE;
+  return Math.max(BATCH_ROW_MIN_FONT_SIZE, (BATCH_ROW_MAX_FONT_SIZE * maxWidth) / width);
+}
+
 function BatchColgroup() {
   return (
     <colgroup>
@@ -1608,6 +1954,23 @@ const BatchTable = memo(function BatchTable({ rows, onRowClick, selectedIds, onT
     ro.observe(el);
     return () => ro.disconnect();
   }, [rows.length]);
+
+  // The "Mineral" column's own content width (its <th>'s width minus the
+  // cell's own left/right padding) — measured once here and reused for
+  // every row's fitFontSize() call below, rather than measuring each row's
+  // cell individually.
+  const mineralColRef = useRef(null);
+  const [mineralColWidth, setMineralColWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = mineralColRef.current;
+    if (!el) return;
+    const measure = () => setMineralColWidth(el.clientWidth - 28);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const headerThStyle = {
     padding: "9px 14px",
@@ -1644,7 +2007,11 @@ const BatchTable = memo(function BatchTable({ rows, onRowClick, selectedIds, onT
                 />
               </th>
               {["Mineral", "Formula mass", "Net charge"].map((h, idx) => (
-                <th key={h} style={{ ...headerThStyle, textAlign: idx === 0 ? "left" : "center" }}>
+                <th
+                  key={h}
+                  ref={idx === 0 ? mineralColRef : undefined}
+                  style={{ ...headerThStyle, textAlign: idx === 0 ? "left" : "center" }}
+                >
                   {h}
                 </th>
               ))}
@@ -1674,23 +2041,20 @@ const BatchTable = memo(function BatchTable({ rows, onRowClick, selectedIds, onT
                   />
                 </td>
                 <td style={{ ...tdStyle, textAlign: "left" }}>
-                  <div style={{ wordBreak: "break-all" }}>
-                    <span style={{ fontWeight: 600 }}>{r.name}</span>
-                    {r.name && ", "}
-                    <span style={{ fontWeight: 400, fontFamily: COLORS.mono }}>
-                      {renderFormula(r.formulaStr)}
-                    </span>
+                  <div style={{ fontWeight: 600, fontSize: BATCH_ROW_MAX_FONT_SIZE }}>
+                    {r.name}
+                    {r.name && ","}
                   </div>
                   <div
                     style={{
                       color: COLORS.textDim,
-                      fontSize: 11.5,
-                      fontFamily: COLORS.mono,
-                      wordBreak: "break-all",
+                      fontSize: fitFontSize(plainFormulaText(r.formulaStr), mineralColWidth),
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
                       marginTop: 2,
                     }}
                   >
-                    Valence Formula: {r.formulaStr}
+                    {renderFormula(r.formulaStr)}
                   </div>
                 </td>
                 {r.error ? (

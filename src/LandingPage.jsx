@@ -5,20 +5,16 @@ import { analyze, pickColumn, EXAMPLES } from "./MineralFormulaParser.jsx";
 
 // The first thing visitors see: a fully computed breakdown for one mineral
 // (picked from the URL's "mineral"/"formula" params if present, otherwise
-// EXAMPLES[0]). The formula field below is editable so a quick tweak updates
-// this same page live; "Custom Mineral" is the way into the full page-2
-// editor (name field, batch upload, etc.), carrying over whatever formula is
-// currently typed here.
+// EXAMPLES[0]). "Custom Formula" is the way into the full page-2 editor
+// (name field, batch upload, etc.), carrying over the formula shown here.
 export default function LandingPage({ onEdit }) {
-  const [name, initialFormulaStr] = useMemo(() => {
+  const [name, formulaInput] = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const mineral = params.get("mineral");
     const formula = params.get("formula");
     if (mineral && formula) return [mineral, formula];
     return EXAMPLES[0].split("\t");
   }, []);
-
-  const [formulaInput, setFormulaInput] = useState(initialFormulaStr);
 
   const [error, result] = useMemo(() => {
     try {
@@ -31,9 +27,12 @@ export default function LandingPage({ onEdit }) {
   const topSummaryRows = useMemo(() => {
     if (!result) return null;
     if (!result.isRange) return [{ formulaStr: result.formulaStr, result }];
+    // A range column's own result doesn't carry isModifiedIdeal (that flag
+    // lives on the outer analyze() result) — copy it down so each row can
+    // still show the "modified ideal formula" label regardless of range.
     return [
-      { formulaStr: result.columns[0].formulaStr, result: result.columns[0] },
-      { formulaStr: result.columns[1].formulaStr, result: result.columns[1] },
+      { formulaStr: result.columns[0].formulaStr, result: { ...result.columns[0], isModifiedIdeal: result.isModifiedIdeal } },
+      { formulaStr: result.columns[1].formulaStr, result: { ...result.columns[1], isModifiedIdeal: result.isModifiedIdeal } },
     ];
   }, [result]);
 
@@ -91,33 +90,7 @@ export default function LandingPage({ onEdit }) {
           )
         )}
 
-        <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
-            Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
-          </label>
-          <textarea
-            value={formulaInput}
-            onChange={(e) => setFormulaInput(e.target.value)}
-            rows={2}
-            spellCheck={false}
-            placeholder="Pb^2+^_2_(CO_3_)_2_(OH)"
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              background: COLORS.panel,
-              border: `1px solid ${COLORS.border}`,
-              borderRadius: 8,
-              padding: "12px 14px",
-              color: COLORS.text,
-              fontFamily: COLORS.mono,
-              fontSize: 14.5,
-              resize: "vertical",
-              outline: "none",
-            }}
-          />
-        </div>
-
-        <div style={{ marginTop: 12, textAlign: "right" }}>
+        <div style={{ marginTop: 28, textAlign: "right" }}>
           <button
             onClick={() => onEdit(name, formulaInput)}
             style={{
@@ -131,7 +104,7 @@ export default function LandingPage({ onEdit }) {
               cursor: "pointer",
             }}
           >
-            Custom Mineral
+            Custom Formula
           </button>
         </div>
       </div>
