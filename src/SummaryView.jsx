@@ -71,11 +71,15 @@ const summaryKeyBtnStyle = {
   cursor: "pointer",
 };
 
-// The mineral name + formatted formula + raw "Valence Formula: ..." line
+// The mineral name + formatted formula + raw "Formatted Formula: ..." line
 // shown above a summary table — also used on its own (e.g. Page 1's error
 // state) so a formula that failed to parse still displays what was typed
-// instead of disappearing along with the table.
-export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, onBack }) {
+// instead of disappearing along with the table. The raw "Formatted Formula:
+// ..." line is redundant on page 2, where that same string is already
+// sitting in the formula input right above — pass showValenceLine={false}
+// there to suppress just that line while keeping the name/rendered-formula
+// title.
+export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, onBack, showValenceLine = true }) {
   if (!title && !formulaStr && !onBack) return null;
   return (
     <div
@@ -87,7 +91,7 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
         marginBottom: 14,
       }}
     >
-      <div style={onBack ? { maxWidth: 480 } : { textAlign: "center", maxWidth: 480 }}>
+      <div style={onBack ? { flex: "1 1 auto", minWidth: 0 } : { textAlign: "center", maxWidth: 780 }}>
         {title && (
           <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
             {title}
@@ -95,16 +99,17 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
             {formulaStr && renderFormula(formulaStr)}
           </div>
         )}
-        {formulaStr && (
+        {formulaStr && showValenceLine && (
           <div
             style={{
               fontFamily: COLORS.mono,
               fontSize: 15,
               color: COLORS.textDim,
-              wordBreak: "break-all",
+              whiteSpace: "nowrap",
+              overflowX: "auto",
             }}
           >
-            Valence Formula: {formulaStr}
+            Formatted Formula: {formulaStr}
           </div>
         )}
       </div>
@@ -125,7 +130,7 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
 // the table; the key below only lists each column's own resolved formula.
 // Used both as the simplified 2-column summary for a single mineral picked
 // from the batch list, and reusable for a small explicit group.
-export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, onSelect, onBack }) {
+export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, onSelect, onBack, showValenceLine = true }) {
   const elements = useMemo(() => {
     const seen = new Set();
     const order = [];
@@ -155,7 +160,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 
   return (
     <div style={{ marginTop: 14 }}>
-      <FormulaHeader title={title} formulaStr={formulaStr} onBack={onBack} />
+      <FormulaHeader title={title} formulaStr={formulaStr} onBack={onBack} showValenceLine={showValenceLine} />
       <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", maxWidth: 360, margin: "0 auto" }}>
         <div style={{ maxHeight: 420, overflow: "auto", transform: "translateZ(0)" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13.5 }}>
@@ -267,6 +272,9 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
               ({idx + 1})
             </button>{" "}
             <span style={{ fontFamily: COLORS.mono }}>{renderFormula(r.formulaStr)}</span>
+            {r.result.isModifiedIdeal && (
+              <span style={{ color: COLORS.warn, fontWeight: 600 }}>, Modified Ideal Formula</span>
+            )}
           </div>
         ))}
       </div>
@@ -283,10 +291,10 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 // Detailed breakdown for a single formula picked out of the summary table,
 // with a back button scoped to this block (not the page) so the summary
 // comparison is a click away.
-export const SummaryDetail = memo(function SummaryDetail({ result, onBack }) {
+export const SummaryDetail = memo(function SummaryDetail({ result, onBack, showValenceLine = true }) {
   return (
     <div style={{ marginTop: 14 }}>
-      <DetailedView result={result} onBack={onBack} />
+      <DetailedView result={result} onBack={onBack} showValenceLine={showValenceLine} />
     </div>
   );
 });

@@ -34,12 +34,20 @@ export function normalizeMineralRows(rawRows) {
 }
 
 // Reads the "Mineral names and valence formula.xlsx" layout: header row,
-// then Name in column A, formula in column B. Works for .csv too — XLSX.read
-// sniffs the file content and parses plain CSV text the same way as a
-// worksheet, so no separate CSV-specific code path is needed.
+// then Name in column A, formula in column B. Works for .csv too, but a
+// .csv/.txt file has to be routed differently: handed raw bytes (type
+// "array"), XLSX.read sniffs it as plain text and decodes it against a
+// legacy single-byte codepage rather than UTF-8, so any non-ASCII character
+// (e.g. the 'Á' in 'Ángelaite') comes out as mojibake — its multi-byte UTF-8
+// encoding gets read back as two separate wrong characters. Decoding the
+// bytes as UTF-8 text ourselves first, then handing XLSX.read the resulting
+// string (type "string"), sidesteps that guess entirely. A real .xlsx is a
+// binary zip archive, not text, so it still has to go through as raw bytes.
 export async function loadMineralsFromFile(file) {
-  const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: "array" });
+  const isPlainText = /\.(csv|txt)$/i.test(file.name);
+  const wb = isPlainText
+    ? XLSX.read(await file.text(), { type: "string" })
+    : XLSX.read(await file.arrayBuffer(), { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
   const parsed = rows.slice(1).map((r) => ({ name: r[0], formulaStr: r[1] }));
