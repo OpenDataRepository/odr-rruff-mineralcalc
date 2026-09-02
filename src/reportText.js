@@ -45,7 +45,7 @@ export function formatDetailText(result) {
 
   const lines = [];
   lines.push(result.name ? `${result.name}, ${result.formulaStr}` : result.formulaStr);
-  lines.push(`Valence Formula: ${result.formulaStr}`);
+  lines.push(`Formatted Formula: ${result.formulaStr}`);
   lines.push(`Formula mass: ${result.totalMass.toFixed(3)} g/mol`);
   if (showValence) lines.push(`Net charge: ${result.netCharge.toFixed(3)}`);
   lines.push("");
