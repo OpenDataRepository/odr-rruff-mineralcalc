@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { COLORS } from "./shared.jsx";
+import { COLORS, displayFormulaStr } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { analyze, pickColumn, EXAMPLES } from "./MineralFormulaParser.jsx";
 
@@ -7,13 +7,19 @@ import { analyze, pickColumn, EXAMPLES } from "./MineralFormulaParser.jsx";
 // (picked from the URL's "mineral"/"formula" params if present, otherwise
 // EXAMPLES[0]). "Custom Formula" is the way into the full page-2 editor
 // (name field, batch upload, etc.), carrying over the formula shown here.
-export default function LandingPage({ onEdit }) {
-  const [name, formulaInput] = useMemo(() => {
+// "Empirical Formulas" is the way into page 3 — every published formula for
+// this mineral compared side by side.
+export default function LandingPage({ onEdit, onViewEmpirical }) {
+  const [name, formulaInput, mineralId] = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const mineral = params.get("mineral");
     const formula = params.get("formula");
-    if (mineral && formula) return [mineral, formula];
-    return EXAMPLES[0].split("\t");
+    // The RRUFF cellparams outer hash key for this mineral (see
+    // scripts/lookup-cellparams.mjs) — carried through to page 3 so its
+    // citation table can be looked up by ID instead of by name.
+    const id = params.get("ID");
+    if (mineral && formula) return [mineral, formula, id];
+    return [...EXAMPLES[0].split("\t"), null];
   }, []);
 
   const [error, result] = useMemo(() => {
@@ -83,14 +89,29 @@ export default function LandingPage({ onEdit }) {
           ) : (
             <SummaryView
               title={name}
-              formulaStr={result.formulaStr}
+              formulaStr={displayFormulaStr(result)}
               rows={topSummaryRows}
               onSelect={setOpenColumnIndex}
             />
           )
         )}
 
-        <div style={{ marginTop: 28, textAlign: "right" }}>
+        <div style={{ marginTop: 28, display: "flex", justifyContent: "space-between", gap: 12 }}>
+          <button
+            onClick={() => onViewEmpirical(mineralId)}
+            style={{
+              background: COLORS.panelAlt,
+              border: `1px solid ${COLORS.border}`,
+              color: COLORS.text,
+              borderRadius: 8,
+              padding: "10px 24px",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Empirical Formulas
+          </button>
           <button
             onClick={() => onEdit(name, formulaInput)}
             style={{

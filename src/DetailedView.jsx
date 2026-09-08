@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { COLORS, renderFormula, backButtonStyle } from "./shared.jsx";
+import { COLORS, renderFormula, backButtonStyle, displayFormulaStr } from "./shared.jsx";
 
 const detailTdStyle = {
   padding: "7px 4px",
@@ -86,7 +86,7 @@ const DETAIL_COL_WIDTHS_METALLIC = [16, 16, 22, 22, 24];
 // caller picks a single end-member column out first (see pickColumn in
 // MineralFormulaParser.jsx) via the summary view, so `result` here always
 // describes one concrete composition.
-const DetailedView = memo(function DetailedView({ result, onBack, showValenceLine = true }) {
+const DetailedView = memo(function DetailedView({ result, onBack }) {
   // Native metals (e.g. Cu, Au) aren't ionic — reporting a per-atom valence
   // or a "net charge" for them is meaningless, so both are hidden and only
   // the atomic weight percents are shown. See isMetallicFormula in
@@ -109,27 +109,13 @@ const DetailedView = memo(function DetailedView({ result, onBack, showValenceLin
           <div style={{ fontSize: 18, fontWeight: 700 }}>
             {result.name}
             {result.name && ", "}
-            {renderFormula(result.formulaStr)}
+            {renderFormula(displayFormulaStr(result))}
           </div>
           {onBack && (
             <button onClick={onBack} style={{ ...backButtonStyle, flexShrink: 0 }}>
               ← Back to summary
             </button>
           )}
-        </div>
-      )}
-      {showValenceLine && (
-        <div
-          style={{
-            fontFamily: COLORS.mono,
-            fontSize: 15,
-            color: COLORS.textDim,
-            marginBottom: 16,
-            whiteSpace: "nowrap",
-            overflowX: "auto",
-          }}
-        >
-          Formatted Formula: {result.formulaStr}
         </div>
       )}
 

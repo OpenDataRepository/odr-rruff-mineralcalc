@@ -29,3 +29,7 @@ Thumbs.db
 
 # Claude Code local tooling config
 .claude/
+
+# RRUFF bulk data dumps (fetched locally, not source)
+cellparams_data.js
+cellparams_data_update.js

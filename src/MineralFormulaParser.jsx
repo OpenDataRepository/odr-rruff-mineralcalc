@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef, useLayoutEffect, memo } from "react";
 import { loadMineralsFromFile, loadMineralsFromApi } from "./mineralDataSources.js";
-import { COLORS, tdStyle, renderFormula, backButtonStyle } from "./shared.jsx";
+import { COLORS, tdStyle, renderFormula, backButtonStyle, displayFormulaStr } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
 import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
@@ -912,7 +912,7 @@ function commaGroupHasCommonValence(parsedTokens) {
 // for the whole site, and the rest of that group's parentheses is dropped.
 // A group that isn't internally same-valence can't be resolved this way, so
 // the whole formula is rejected rather than guessed at.
-function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, ignoreValenceCheck) {
+function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups) {
   // Right-to-left so each earlier group's start/end offsets stay valid as
   // later (rightward) groups get replaced first.
   const sorted = [...groups].sort((a, b) => b.start - a.start);
@@ -920,7 +920,7 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, ignoreValence
   for (const { start, end } of sorted) {
     const inner = result.slice(start, end);
     const parsedTokens = parseCommaTokens(inner);
-    if (!ignoreValenceCheck && !commaGroupHasCommonValence(parsedTokens)) {
+    if (!commaGroupHasCommonValence(parsedTokens)) {
       throw new Error(
         `Cannot compute: the comma group '${inner}' doesn't have the same valence across its elements (${parsedTokens
           .map((t) => `${t.symbol} [${(t.fullValenceSet || []).join(", ")}]`)
@@ -951,11 +951,8 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, ignoreValence
 // understands, before the real parse starts. Returns { formulaStr,
 // isModifiedIdeal }: isModifiedIdeal flags a result that came from the
 // multi-group leftmost-pick collapse rather than the formula the user
-// actually typed, so the UI can label it as such. ignoreValenceCheck is a
-// manual override (see the "ignore valence" toggle in the UI) that skips
-// the same-valence requirement entirely, always taking the leftmost
-// occupant regardless of whether the group's elements are compatible.
-function expandCommaGroup(formulaStr, ignoreValenceCheck = false) {
+// actually typed, so the UI can label it as such.
+function expandCommaGroup(formulaStr) {
   const groups = commaGroups(formulaStr);
   if (groups.length === 0) return { formulaStr, isModifiedIdeal: false };
   // The numeric-range split below only works when there's exactly one
@@ -963,7 +960,7 @@ function expandCommaGroup(formulaStr, ignoreValenceCheck = false) {
   // isSimpleCommaGroup and collapseMultipleCommaGroupsToLeftmost.
   if (groups.length > 1 || !isSimpleCommaGroup(formulaStr, groups[0])) {
     return {
-      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, ignoreValenceCheck),
+      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups),
       isModifiedIdeal: true,
     };
   }
@@ -979,7 +976,7 @@ function expandCommaGroup(formulaStr, ignoreValenceCheck = false) {
   const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens);
   if (balanced !== null) return { formulaStr: balanced, isModifiedIdeal: false };
 
-  if (!ignoreValenceCheck && !commaGroupHasCommonValence(parsedTokens)) {
+  if (!commaGroupHasCommonValence(parsedTokens)) {
     throw new Error(
       `Comma issue: not same valence — '${inner}' has no valence in common (${parsedTokens
         .map((t) => `${t.symbol} [${(t.fullValenceSet || []).join(", ")}]`)
@@ -1041,14 +1038,17 @@ function analyzeOne(formulaStr) {
   };
 }
 
-// ignoreCommaValenceCheck is a manual override (the "ignore valence" toggle
-// in the Custom Formula UI) — see expandCommaGroup.
-export function analyze(rawInput, { ignoreCommaValenceCheck = false } = {}) {
+export function analyze(rawInput) {
   // Allow "Name<TAB>Formula" pasted straight from the source list.
   const parts = rawInput.split("\t");
   const name = parts.length > 1 ? parts[0].trim() : "";
   let formulaStr = (parts.length > 1 ? parts[1] : parts[0]).trim();
   if (!formulaStr) return null;
+  // Kept alongside the (possibly collapsed) formulaStr below so a modified
+  // ideal formula's UI can still show the actual formula the user typed
+  // next to the name, rather than the leftmost-element-per-group stand-in
+  // used for the calculation.
+  const originalFormulaStr = formulaStr;
 
   // A comma-separated site-sharing group (e.g. '(Fe,Mg)') is rewritten into
   // ordinary '_low-high_' range subscripts before the real parse — see
@@ -1058,9 +1058,9 @@ export function analyze(rawInput, { ignoreCommaValenceCheck = false } = {}) {
   // for the ',REE' case) if there's no plain comma to expand. More than one
   // comma group instead collapses to a single leftmost-element-per-group
   // "modified ideal formula" — isModifiedIdeal flags that for the UI.
-  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(formulaStr, ignoreCommaValenceCheck);
+  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(formulaStr);
 
-  return { name, isModifiedIdeal, ...analyzeOne(expandedFormulaStr) };
+  return { name, isModifiedIdeal, originalFormulaStr, ...analyzeOne(expandedFormulaStr) };
 }
 
 // Picks out a single end-member column from a ranged analyze() result and
@@ -1073,6 +1073,7 @@ export function pickColumn(result, idx) {
   return {
     name: result.name,
     isModifiedIdeal: result.isModifiedIdeal,
+    originalFormulaStr: result.originalFormulaStr,
     formulaStr: col.formulaStr,
     isRange: false,
     atoms: col.atoms,
@@ -1194,21 +1195,15 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   // typed formula and any mineral picked from the batch list below).
   const [topOpenColumnIndex, setTopOpenColumnIndex] = useState(null);
 
-  // Manual override for the comma-group "same valence" requirement — see
-  // expandCommaGroup. Off by default so the check still catches genuinely
-  // incompatible sites; the checkbox near the formula box lets you force a
-  // leftmost-pick "modified ideal formula" through anyway.
-  const [ignoreCommaValenceCheck, setIgnoreCommaValenceCheck] = useState(false);
-
   const result = useMemo(() => {
     try {
       setError(null);
-      return analyze(input, { ignoreCommaValenceCheck });
+      return analyze(input);
     } catch (e) {
       setError(e.message);
       return null;
     }
-  }, [input, ignoreCommaValenceCheck]);
+  }, [input]);
 
   // Every unrecognized element symbol the parsed formula contains. Only
   // used to highlight those symbols in the formula textarea once the user
@@ -1278,7 +1273,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
           id,
           name: row.name,
           formulaStr: row.formulaStr,
-          result: analyze(`${row.name}\t${row.formulaStr}`, { ignoreCommaValenceCheck }),
+          result: analyze(`${row.name}\t${row.formulaStr}`),
           error: null,
           searchText,
         };
@@ -1286,7 +1281,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
         return { id, name: row.name, formulaStr: row.formulaStr, result: null, error: e.message, searchText };
       }
     });
-  }, [batchRows, ignoreCommaValenceCheck]);
+  }, [batchRows]);
 
   // Debounced so filtering (and the BatchTable re-render it triggers) runs
   // once shortly after typing pauses, instead of on every keystroke.
@@ -1547,30 +1542,11 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
               }}
             />
           </div>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginTop: 6,
-              fontSize: 12,
-              color: COLORS.textDim,
-              cursor: "pointer",
-            }}
-            title="Skips the same-valence requirement for comma-separated sites, always keeping the leftmost element regardless of whether the group's elements are chemically compatible."
-          >
-            <input
-              type="checkbox"
-              checked={ignoreCommaValenceCheck}
-              onChange={(e) => setIgnoreCommaValenceCheck(e.target.checked)}
-            />
-            Ignore valence mismatch in comma-separated sites (always use leftmost element)
-          </label>
         </div>
 
         {error && (
           <div style={{ marginTop: 18 }}>
-            <FormulaHeader title={nameInput} formulaStr={formulaInput} showValenceLine={false} />
+            <FormulaHeader title={nameInput} formulaStr={formulaInput} />
             <div
               style={{
                 padding: "12px 14px",
@@ -1592,15 +1568,13 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
             <SummaryDetail
               result={pickColumn(result, topOpenColumnIndex)}
               onBack={() => setTopOpenColumnIndex(null)}
-              showValenceLine={false}
             />
           ) : (
             <SummaryView
               title={result.name}
-              formulaStr={result.formulaStr}
+              formulaStr={displayFormulaStr(result)}
               rows={topSummaryRows}
               onSelect={setTopOpenColumnIndex}
-              showValenceLine={false}
             />
           )
         )}

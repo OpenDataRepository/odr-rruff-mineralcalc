@@ -1,4 +1,5 @@
 import { valenceLabel } from "./DetailedView.jsx";
+import { plainFormulaString, displayFormulaStr } from "./shared.jsx";
 
 // Tab characters land at fixed tab-stop widths in a plain text viewer
 // (Notepad and the like) — they don't widen to fit each column's actual
@@ -43,9 +44,9 @@ export function formatDetailText(result) {
   const formatRow = (row) =>
     row.map((cell, col) => padCell(cell, colWidths[col], col === 0 ? "left" : "right")).join("  ");
 
+  const plainFormula = plainFormulaString(displayFormulaStr(result));
   const lines = [];
-  lines.push(result.name ? `${result.name}, ${result.formulaStr}` : result.formulaStr);
-  lines.push(`Formatted Formula: ${result.formulaStr}`);
+  lines.push(result.name ? `${result.name}, ${plainFormula}` : plainFormula);
   lines.push(`Formula mass: ${result.totalMass.toFixed(3)} g/mol`);
   if (showValence) lines.push(`Net charge: ${result.netCharge.toFixed(3)}`);
   lines.push("");
