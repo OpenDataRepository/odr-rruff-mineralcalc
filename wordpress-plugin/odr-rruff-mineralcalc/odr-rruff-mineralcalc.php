@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ODR RRUFF Mineral Calculator
  * Description: A plugin that gives a way to break down a mineral's valence formula into its elemental mass percentages, formula mass, and net charge
- * Version: 1.1.0
+ * Version: 1.2.0
  */
 
 if (!defined('ABSPATH')) {
