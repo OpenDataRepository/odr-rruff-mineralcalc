@@ -31,6 +31,42 @@ export const backButtonStyle = {
   cursor: "pointer",
 };
 
+// The formula to show right next to a mineral's name. A "modified ideal
+// formula" result (multiple comma-separated site-sharing groups, collapsed
+// to a leftmost-element stand-in for the calculation — see expandCommaGroup
+// in MineralFormulaParser.jsx) still had the user's actual typed formula
+// stashed as originalFormulaStr; that's the real formula and is what
+// belongs next to the name, not the collapsed one used to compute the
+// breakdown.
+export function displayFormulaStr(result) {
+  return result.isModifiedIdeal && result.originalFormulaStr ? result.originalFormulaStr : result.formulaStr;
+}
+
+// Collapses a formula string's '^2+^' / '_2_' notation down to plain text
+// for non-React output (e.g. the .txt report) — valence superscripts are
+// dropped entirely and subscript digits are kept but unwrapped, e.g.
+// "Pb^2+^_2_(CO_3_)_2_(OH)" -> "Pb2(CO3)2(OH)".
+export function plainFormulaString(str) {
+  let out = "";
+  let i = 0;
+  while (i < str.length) {
+    const c = str[i];
+    if (c === "^" || c === "_") {
+      const end = str.indexOf(c, i + 1);
+      if (end === -1) {
+        out += str.slice(i);
+        break;
+      }
+      if (c === "_") out += str.slice(i + 1, end);
+      i = end + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 // Renders a formula string's '^2+^' / '_2_' notation as real <sup>/<sub>
 // elements, e.g. "Pb^2+^_2_" -> Pb, <sup>2+</sup>, <sub>2</sub>.
 export function renderFormula(str) {
