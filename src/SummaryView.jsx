@@ -23,7 +23,7 @@ function downloadMineralReport(title, rows) {
     .map((r) => formatDetailText({ ...r.result, name: r.result.name || title }))
     .join("\n\n" + "=".repeat(60) + "\n\n");
   const safeName = (title || "mineral").replace(/[^\w.-]+/g, "_");
-  downloadTxt(content, `${safeName}.txt`);
+  downloadTxt(content, `${safeName}_FormulaWeight.txt`);
 }
 
 function summaryThStyle(align) {
@@ -41,10 +41,19 @@ function summaryThStyle(align) {
 }
 
 const summaryTdStyle = {
-  padding: "4px 2px",
+  padding: "4px 6px",
   textAlign: "center",
   fontFamily: COLORS.mono,
   borderBottom: `1px solid ${COLORS.border}`,
+  whiteSpace: "nowrap",
+  // A wide row (many citation columns) caps the table at 1400px and lets
+  // columns get squeezed well under 108px each — nowrap alone then lets
+  // long content (e.g. "452.779 g/mol") spill past its own cell into the
+  // next one instead of wrapping. Clipping it here is the safety net;
+  // Formula mass's own cells are also shortened below so this rarely
+  // triggers in practice.
+  overflow: "hidden",
+  textOverflow: "ellipsis",
 };
 
 const summaryHeaderBtnStyle = {
@@ -71,15 +80,11 @@ const summaryKeyBtnStyle = {
   cursor: "pointer",
 };
 
-// The mineral name + formatted formula + raw "Formatted Formula: ..." line
-// shown above a summary table — also used on its own (e.g. Page 1's error
-// state) so a formula that failed to parse still displays what was typed
-// instead of disappearing along with the table. The raw "Formatted Formula:
-// ..." line is redundant on page 2, where that same string is already
-// sitting in the formula input right above — pass showValenceLine={false}
-// there to suppress just that line while keeping the name/rendered-formula
-// title.
-export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, onBack, showValenceLine = true }) {
+// The mineral name + formatted formula shown above a summary table — also
+// used on its own (e.g. Page 1's error state) so a formula that failed to
+// parse still displays what was typed instead of disappearing along with
+// the table.
+export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, onBack }) {
   if (!title && !formulaStr && !onBack) return null;
   return (
     <div
@@ -97,19 +102,6 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
             {title}
             {formulaStr && ", "}
             {formulaStr && renderFormula(formulaStr)}
-          </div>
-        )}
-        {formulaStr && showValenceLine && (
-          <div
-            style={{
-              fontFamily: COLORS.mono,
-              fontSize: 15,
-              color: COLORS.textDim,
-              whiteSpace: "nowrap",
-              overflowX: "auto",
-            }}
-          >
-            Formatted Formula: {formulaStr}
           </div>
         )}
       </div>
@@ -130,7 +122,7 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
 // the table; the key below only lists each column's own resolved formula.
 // Used both as the simplified 2-column summary for a single mineral picked
 // from the batch list, and reusable for a small explicit group.
-export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, onSelect, onBack, showValenceLine = true }) {
+export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, onSelect, onBack }) {
   const elements = useMemo(() => {
     const seen = new Set();
     const order = [];
@@ -158,12 +150,62 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
     );
   }
 
+  // The table was originally sized for the 2-column range case (a fixed
+  // 360px). With page 3 comparing many citation formulas at once, that same
+  // fixed width squeezed every column down to nothing — so it scales with
+  // the actual column count instead, one comfortably-sized column (~108px)
+  // per formula plus room for the element symbols. No upper cap: since
+  // every row in a <table> column shares that column's width, capping the
+  // total width once there are many formulas (e.g. Almandine's 15) squeezes
+  // every column below its own intended 108px — including Net charge and
+  // Formula mass, whose values run longer than a typical percentage and
+  // were overflowing/getting ellipsis-clipped as a result. The wrapping div
+  // below already scrolls horizontally, so a wide table from many formulas
+  // is a scroll, not a squeeze.
+  const tableWidth = Math.max(360, 108 + rows.length * 108);
+
+  // The bordered box below is sized to tableWidth via maxWidth, but its
+  // 1px-each-side border eats into that budget under box-sizing:border-box
+  // — which the WordPress plugin's reset.css forces (!important) on every
+  // element inside #mineral-parser-root, shrinking the box's actual content
+  // area to tableWidth - 2px. The table inside doesn't know that and asks
+  // for the full, un-reduced tableWidth via minWidth, overflowing its
+  // container by exactly 2px and forcing an unwanted horizontal scrollbar
+  // — even for a single-column table. Never showed up in local dev, since
+  // bare Vite doesn't load that reset stylesheet (box-sizing defaults to
+  // content-box there, where a border doesn't consume the width budget, so
+  // there's nothing to compensate for). Subtracting it here is safe under
+  // either box-sizing model: on border-box it exactly closes the 2px gap,
+  // and on content-box it just leaves 2 harmless spare pixels.
+  const BORDER_WIDTH = 2;
+
   return (
     <div style={{ marginTop: 14 }}>
-      <FormulaHeader title={title} formulaStr={formulaStr} onBack={onBack} showValenceLine={showValenceLine} />
-      <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", maxWidth: 360, margin: "0 auto" }}>
+      <FormulaHeader title={title} formulaStr={formulaStr} onBack={onBack} />
+      <div
+        style={{
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 10,
+          overflow: "hidden",
+          maxWidth: tableWidth,
+          margin: "0 auto",
+        }}
+      >
         <div style={{ maxHeight: 420, overflow: "auto", transform: "translateZ(0)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13.5 }}>
+          {/* minWidth keeps every column at its intended ~108px on a
+              screen too narrow for tableWidth — the wrapper above still
+              shrinks to fit, so the table overflows *within* this div's
+              own overflow:auto and scrolls horizontally instead of
+              compressing (and overlapping) its columns. */}
+          <table
+            style={{
+              width: "100%",
+              minWidth: tableWidth - BORDER_WIDTH,
+              borderCollapse: "collapse",
+              tableLayout: "fixed",
+              fontSize: 13.5,
+            }}
+          >
             <colgroup>
               <col style={{ width: `${100 / (rows.length + 1)}%` }} />
               {rows.map((_, idx) => (
@@ -172,11 +214,28 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
             </colgroup>
             <thead>
               <tr>
-                <th style={{ ...summaryThStyle("center"), background: COLORS.panelAlt, position: "sticky", top: 0, zIndex: 1 }}>Element</th>
+                {/* The corner cell is sticky on both axes (it's the header
+                    for the sticky-left column below), so it needs the
+                    highest z-index — otherwise the other header cells,
+                    sliding underneath it as the table scrolls horizontally,
+                    would paint on top instead. */}
+                <th
+                  style={{
+                    ...summaryThStyle("center"),
+                    background: COLORS.panelAlt,
+                    position: "sticky",
+                    top: 0,
+                    left: 0,
+                    zIndex: 3,
+                    borderRight: `1px solid ${COLORS.border}`,
+                  }}
+                >
+                  Element
+                </th>
                 {rows.map((r, idx) => (
                   <th
                     key={idx}
-                    style={{ ...summaryThStyle("center"), background: COLORS.panelAlt, position: "sticky", top: 0, zIndex: 1 }}
+                    style={{ ...summaryThStyle("center"), background: COLORS.panelAlt, position: "sticky", top: 0, zIndex: 2 }}
                   >
                     <div>% of mass</div>
                     <button
@@ -196,12 +255,29 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                   key={symbol}
                   style={{ background: i % 2 ? "transparent" : "rgba(0,0,0,0.025)" }}
                 >
-                  <td style={{ ...summaryTdStyle, fontWeight: 600 }}>{symbol}</td>
+                  {/* Sticky so the element symbol stays in view once the
+                      table scrolls horizontally — needs its own opaque
+                      background (the striping above is set on the <tr> and
+                      would otherwise show scrolled-past columns bleeding
+                      through underneath this cell). */}
+                  <td
+                    style={{
+                      ...summaryTdStyle,
+                      fontWeight: 600,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 1,
+                      background: i % 2 ? COLORS.bg : "#fafafa",
+                      borderRight: `1px solid ${COLORS.border}`,
+                    }}
+                  >
+                    {symbol}
+                  </td>
                   {rows.map((r, idx) => {
                     const atom = r.result.atoms.find((a) => a.symbol === symbol);
                     return (
-                      <td key={idx} style={{ ...summaryTdStyle, color: COLORS.accent, fontWeight: 700 }}>
-                        {atom ? atom.percent.toFixed(3) : ""}
+                      <td key={idx} style={{ ...summaryTdStyle, color: atom ? COLORS.accent : COLORS.textDim, fontWeight: 700 }}>
+                        {atom ? atom.percent.toFixed(3) : "—"}
                       </td>
                     );
                   })}
@@ -216,6 +292,11 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                       ...summaryTdStyle,
                       fontWeight: 700,
                       borderTop: `2.5px solid ${COLORS.textDim}`,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 1,
+                      background: COLORS.bg,
+                      borderRight: `1px solid ${COLORS.border}`,
                     }}
                   >
                     Net charge
@@ -242,9 +323,14 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                     fontWeight: 700,
                     borderTop: isMetallic ? `2.5px solid ${COLORS.textDim}` : "none",
                     borderBottom: "none",
+                    position: "sticky",
+                    left: 0,
+                    zIndex: 1,
+                    background: COLORS.bg,
+                    borderRight: `1px solid ${COLORS.border}`,
                   }}
                 >
-                  Formula mass
+                  Formula mass (g/mol)
                 </td>
                 {rows.map((r, idx) => (
                   <td
@@ -256,7 +342,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                       borderBottom: "none",
                     }}
                   >
-                    {r.result.totalMass.toFixed(3)} g/mol
+                    {r.result.totalMass.toFixed(3)}
                   </td>
                 ))}
               </tr>
@@ -265,7 +351,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
         </div>
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.textDim, lineHeight: 1.9, maxWidth: 360, margin: "10px auto 0" }}>
+      <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.textDim, lineHeight: 1.9, maxWidth: tableWidth, margin: "10px auto 0" }}>
         {rows.map((r, idx) => (
           <div key={idx}>
             <button onClick={() => onSelect(idx)} style={summaryKeyBtnStyle}>
@@ -274,6 +360,18 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
             <span style={{ fontFamily: COLORS.mono }}>{renderFormula(r.formulaStr)}</span>
             {r.result.isModifiedIdeal && (
               <span style={{ color: COLORS.warn, fontWeight: 600 }}>, Modified Ideal Formula</span>
+            )}
+            {/* Only page 3's citation-comparison rows carry these — a plain
+                range/summary row (page 1/2) has neither, so this is a no-op
+                everywhere else. Shows the parsed year (not just the raw
+                citation text) so an RRUFF-ID citation's year, which isn't
+                visible in the ID itself, is still checkable at a glance. */}
+            {r.citation && (
+              <span>
+                {" — "}
+                {r.citation}
+                {r.year != null && ` (${r.year})`}
+              </span>
             )}
           </div>
         ))}
@@ -291,10 +389,10 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 // Detailed breakdown for a single formula picked out of the summary table,
 // with a back button scoped to this block (not the page) so the summary
 // comparison is a click away.
-export const SummaryDetail = memo(function SummaryDetail({ result, onBack, showValenceLine = true }) {
+export const SummaryDetail = memo(function SummaryDetail({ result, onBack }) {
   return (
     <div style={{ marginTop: 14 }}>
-      <DetailedView result={result} onBack={onBack} showValenceLine={showValenceLine} />
+      <DetailedView result={result} onBack={onBack} />
     </div>
   );
 });

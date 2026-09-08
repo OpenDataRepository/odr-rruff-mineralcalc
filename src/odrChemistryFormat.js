@@ -30,6 +30,18 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
     .replaceAll("</sup>", superscript_delimiter)
     .replaceAll("&nbsp;", " ");
 
+  // A decimal subscript written without its leading zero (e.g. AMCSD-style
+  // "Mg.27 Ca.12") starts with '.', which the numeric-sequence walk below
+  // never recognizes as the start of a number — only an actual digit does.
+  // Left alone, that '.' gets echoed as a literal character between the
+  // element symbol and its subscript delimiter, breaking their adjacency;
+  // the orphaned digits then misattribute to the *next* element instead,
+  // cascading into wildly wrong counts for everything after it. Inserting
+  // the implied '0' first (only where '.' isn't already preceded by a
+  // digit, so a normal "2.58" is untouched) lets the walk see one clean
+  // digit-led sequence per subscript, same as if it had been written out.
+  input = input.replace(/(^|[^0-9])\.(?=[0-9])/g, "$10.");
+
   let len = input.length;
   for (let i = 0; i < len; i++) {
     chars[i] = input.charAt(i);
@@ -71,9 +83,20 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
 
         // Done with this sequence, append to the output
         output += sequence;
-      } else if ((next_char === "+" || next_char === "-") && next_next_char !== "x") {
+      } else if (
+        (next_char === "+" || next_char === "-") &&
+        next_next_char !== "x" &&
+        !output.endsWith(superscript_delimiter)
+      ) {
         // ...due to a '+' or '-' character that's not followed by an 'x', it's most
         //  likely a valence state  e.g.  Abelsonite: "Ni2+C31H32N4" => "Ni^2+^..."
+        // The output-ends-with-'^' check excludes an element that already got a
+        // valence immediately before this number — a real formula never assigns
+        // two valences to the same occupant, so a number-sign-number run right
+        // after a closed '^...^' is a range subscript instead, e.g.
+        // "Fe3+3-6" => "Fe^3+^_3-6_", not "Fe^3+^^3-^_6_". Falls through to the
+        // generic numeric-sequence branch below, which already knows how to
+        // consume a dash as part of one subscript run.
         if (prev_char === superscript_delimiter && next_next_char === superscript_delimiter) {
           // It looks like this sequence is already wrapped with delimiters...don't
           //  duplicate them
