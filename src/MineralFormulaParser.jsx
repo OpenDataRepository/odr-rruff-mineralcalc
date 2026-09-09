@@ -628,11 +628,73 @@ function resolveAtom(atom) {
       known: false,
     };
   }
-  const valence =
-    atom.explicitValence !== null && atom.explicitValence !== undefined
-      ? atom.explicitValence
-      : data.valences[0];
-  return { ...atom, weight: data.weight, valence, known: true };
+  if (atom.explicitValence !== null && atom.explicitValence !== undefined) {
+    return { ...atom, weight: data.weight, valence: atom.explicitValence, known: true };
+  }
+  // An element with more than one listed valence and no explicit marker
+  // (e.g. bare "SO4" — sulfur is sulfide -2 or sulfate +6, and RRUFF's own
+  // source formulas mark Fe/Al/As/U explicitly but never S) can't be pinned
+  // to valences[0] as a fixed default without guessing wrong for a large
+  // share of real minerals. Left unresolved here (via ambiguousValences)
+  // for resolveAmbiguousValences to settle once the whole formula/fragment
+  // is known — same net-charge reasoning tryChargeBalanceSplit already uses
+  // for a comma-shared site.
+  if (data.valences.length > 1) {
+    return { ...atom, weight: data.weight, valence: undefined, ambiguousValences: data.valences, known: true };
+  }
+  return { ...atom, weight: data.weight, valence: data.valences[0], known: true };
+}
+
+// Picks a valence for every atom left ambiguous by resolveAtom — one choice
+// per element symbol (all of that symbol's unspecified sites share it,
+// matching how a single bare "SO4" is one physical assumption, not several)
+// — by trying every combination of candidate valences across every
+// ambiguous element at once and keeping whichever combination brings the
+// atoms' total net charge closest to zero. A formula with no ambiguous
+// atoms (the overwhelmingly common case: single-valence elements, or an
+// explicit '^n+^' on everything that needs one) is returned unchanged.
+// Ties keep the element's first-listed (most common) valence, so this never
+// changes behavior for a formula that was already balanced under the old
+// fixed-default rule.
+function resolveAmbiguousValences(atoms) {
+  const groups = [];
+  const groupBySymbol = new Map();
+  let fixedCharge = 0;
+  for (const a of atoms) {
+    if (!a.ambiguousValences) {
+      fixedCharge += (a.valence || 0) * a.count;
+      continue;
+    }
+    let g = groupBySymbol.get(a.symbol);
+    if (!g) {
+      g = { symbol: a.symbol, count: 0, candidates: a.ambiguousValences };
+      groupBySymbol.set(a.symbol, g);
+      groups.push(g);
+    }
+    g.count += a.count;
+  }
+  if (groups.length === 0) return atoms;
+
+  let best = null;
+  const combo = new Array(groups.length);
+  (function search(idx, chargeSoFar) {
+    if (idx === groups.length) {
+      const diff = Math.abs(chargeSoFar);
+      if (!best || diff < best.diff - 1e-9) best = { diff, choice: combo.slice() };
+      return;
+    }
+    for (const v of groups[idx].candidates) {
+      combo[idx] = v;
+      search(idx + 1, chargeSoFar + v * groups[idx].count);
+    }
+  })(0, fixedCharge);
+
+  const chosenBySymbol = new Map(groups.map((g, i) => [g.symbol, best.choice[i]]));
+  return atoms.map((a) =>
+    a.ambiguousValences
+      ? { ...a, valence: chosenBySymbol.get(a.symbol), ambiguousValences: undefined }
+      : a
+  );
 }
 
 // Combines atoms that share both symbol and valence into a single entry
@@ -668,7 +730,8 @@ function isMetallicFormula(atoms) {
   });
 }
 
-function computeMassAndPct(atoms) {
+function computeMassAndPct(rawAtoms) {
+  const atoms = resolveAmbiguousValences(rawAtoms);
   const totalMass = atoms.reduce((s, a) => s + (a.weight || 0) * a.count, 0);
   const netCharge = atoms.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
   const withPct = atoms.map((a) => ({
@@ -768,8 +831,13 @@ function formatSplitNum(n) {
 // exact low/high fidelity doesn't matter for this charge estimate.
 function netChargeOfFragment(str) {
   const { atoms } = parseFormula(str);
-  const resolved = atoms.map(resolveAtom).filter((a) => a.symbol !== "Bx");
-  return resolved.reduce((s, a) => s + (a.valence || 0) * repCount(a.count), 0);
+  const resolved = resolveAmbiguousValences(
+    atoms
+      .map(resolveAtom)
+      .filter((a) => a.symbol !== "Bx")
+      .map((a) => ({ ...a, count: repCount(a.count) }))
+  );
+  return resolved.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
 }
 
 // A two-element site-sharing group (e.g. '(Si,Al)_8_') with a stated total

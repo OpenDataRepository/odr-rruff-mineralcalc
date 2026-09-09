@@ -328,6 +328,18 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                     zIndex: 1,
                     background: COLORS.bg,
                     borderRight: `1px solid ${COLORS.border}`,
+                    // Overrides summaryTdStyle's nowrap/ellipsis — those exist
+                    // to stop long numeric values from spilling into the next
+                    // column, but this label is the widest thing in its own
+                    // (often squeezed, see tableWidth above) column and was
+                    // getting clipped to "Formula mas…" instead. Letting it
+                    // wrap to "Formula mass" / "(g/mol)" keeps it readable;
+                    // the row just grows to fit since the data cells beside
+                    // it are short numbers.
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "clip",
+                    lineHeight: 1.25,
                   }}
                 >
                   Formula mass (g/mol)

@@ -1,62 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { COLORS, backButtonStyle } from "./shared.jsx";
 import { SummaryView, SummaryDetail } from "./SummaryView.jsx";
-import { analyze, EXAMPLES } from "./MineralFormulaParser.jsx";
+import { analyze } from "./MineralFormulaParser.jsx";
 import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
 import { loadCitationsForMineral } from "./cellparamsLoader.js";
-
-// Placeholder for the citation-table API described in mineralDataSources.js
-// (not wired up yet — see SHOW_API_LOADER in MineralFormulaParser.jsx for
-// the same "ready but nothing to point it at" state). Until that exists,
-// this is Abellaite's own row of citations, each with its formula exactly
-// as that source published it — same mixed plain-text formatting (decimals,
-// stray spaces, differently grouped parens, no valence markup) a real API
-// row will have, so this page can already exercise the plain-formula
-// conversion step it'll need. `cell` is the reported unit-cell (Å /
-// degrees), kept alongside the formula for display/future use even though
-// dedupeCitationRows below only keys on the formula itself. `citation` is
-// the reference string dedupeCitationRows uses to pick the older of two
-// duplicate formulas.
-const EMPIRICAL_CITATIONS_BY_MINERAL = {
-  Abellaite: [
-    {
-      formula: "Na0.96Ca0.04Pb1.98(CO3)2(OH)",
-      cell: { a: 5.260, b: 5.260, c: 13.463, alpha: 90, beta: 90, gamma: 120 },
-      citation: "Mineralogical Magazine 80 (2016) 199-205",
-    },
-    {
-      formula: "NaPb2(CO3)2(OH)",
-      cell: { a: 5.273, b: 5.273, c: 13.448, alpha: 90, beta: 90, gamma: 120 },
-      citation: "Canadian Journal of Chemistry 61 (1983) 494-502",
-    },
-    {
-      formula: "Na0.96Ca0.04Pb1.98(CO3)2(OH)",
-      cell: { a: 5.254, b: 5.254, c: 13.450, alpha: 90, beta: 90, gamma: 120 },
-      citation: "R250095",
-    },
-    {
-      formula: "Na Pb2 (O7 C2) H",
-      cell: { a: 5.276, b: 5.276, c: 13.474, alpha: 90, beta: 90, gamma: 120 },
-      citation: "Mineralogical Magazine 64 (2000) 1077-1087",
-    },
-    {
-      formula: "Na Pb2 C2 (O7 H)",
-      cell: { a: 5.268, b: 5.268, c: 13.48, alpha: 90, beta: 90, gamma: 120 },
-      citation: "Crystallography Reports 47 (2002) 217-222",
-    },
-    {
-      formula: "Na Pb2 C2 O10 H",
-      cell: { a: 5.254, b: 5.254, c: 13.450, alpha: 90, beta: 90, gamma: 120 },
-      citation: "European Journal of Mineralogy 29 (2017) 915-922",
-    },
-  ],
-};
-
-// Only Abellaite has a hardcoded citation list right now — see the comment
-// above. The canonical name/formula (shown next to "Empirical Formulas" the
-// same way it's shown on the main results page) comes from EXAMPLES so the
-// two pages can't drift apart.
-const [CANONICAL_NAME, CANONICAL_FORMULA] = EXAMPLES[0].split("\t");
 
 // A citation is either a free-text reference ending in "(YYYY) pages" (the
 // common journal-citation shape) or a bare RRUFF sample ID. An RRUFF ID is
@@ -137,12 +84,11 @@ function buildEmpiricalRows(name, citations) {
 export default function EmpiricalFormulasPage({ onBack, mineralId }) {
   // `mineralId` (the RRUFF cellparams outer hash key, see
   // scripts/lookup-cellparams.mjs) is threaded through from the URL's "ID"
-  // param via App.jsx/LandingPage.jsx. When present, real citation rows are
-  // fetched from RRUFF's own cellparams scripts (see cellparamsLoader.js);
-  // otherwise this page falls back to the hardcoded Abellaite placeholder.
-  // `undefined` = not resolved yet; `null` = resolved, mineralId has no
-  // cellparams records; an object = resolved with data. Both `null` and
-  // "not yet fetched" used to share the same falsy state, so isLoading
+  // param via App.jsx/LandingPage.jsx. Real citation rows are fetched from
+  // RRUFF's own cellparams scripts (see cellparamsLoader.js) whenever it's
+  // present. `undefined` = not resolved yet; `null` = resolved, mineralId
+  // has no cellparams records; an object = resolved with data. Both `null`
+  // and "not yet fetched" used to share the same falsy state, so isLoading
   // could never tell "found nothing" apart from "still working" — a
   // mineralId with zero records spun on "Loading citation data…" forever.
   const [fetched, setFetched] = useState(undefined);
@@ -165,16 +111,12 @@ export default function EmpiricalFormulasPage({ onBack, mineralId }) {
     };
   }, [mineralId]);
 
-  // No fallback to CANONICAL_NAME (Abellaite) when mineralId is set and
-  // nothing came back for it — that would silently mislabel whatever
-  // mineral was actually requested as Abellaite. `name` stays undefined in
-  // that case; harmless, since it's only used to build rows (empty either
-  // way) and as SummaryView's title, which never renders when there are no
-  // rows to show.
-  const name = mineralId ? fetched?.mineralName : CANONICAL_NAME;
-  const citations = mineralId
-    ? fetched?.citations || []
-    : EMPIRICAL_CITATIONS_BY_MINERAL[CANONICAL_NAME] || [];
+  // `name` stays undefined when there's no mineralId, or when one is set
+  // but nothing came back for it — harmless, since it's only used to build
+  // rows (empty either way) and as SummaryView's title, which never renders
+  // when there are no rows to show.
+  const name = fetched?.mineralName;
+  const citations = fetched?.citations || [];
 
   const rows = useMemo(() => buildEmpiricalRows(name, citations), [name, citations]);
   const isLoading = Boolean(mineralId) && fetched === undefined && !fetchError;
@@ -239,7 +181,7 @@ export default function EmpiricalFormulasPage({ onBack, mineralId }) {
           ) : (
             <SummaryView
               title={name}
-              formulaStr={mineralId ? rows[0].formulaStr : CANONICAL_FORMULA}
+              formulaStr={rows[0].formulaStr}
               rows={rows}
               onSelect={setOpenRowIndex}
             />
