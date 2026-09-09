@@ -363,9 +363,16 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
         </div>
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.textDim, lineHeight: 1.9, maxWidth: tableWidth, margin: "10px auto 0" }}>
+      {/* width: fit-content (capped at 100% so it can't push the page wider)
+          instead of maxWidth: tableWidth — that cap matched the table's
+          often-narrow column-driven width, forcing a long citation line
+          (formula + journal ref + year) to wrap to two lines even though
+          the page has plenty of room beside it. Sizing to its own widest
+          line keeps every citation on one line while margin: auto still
+          centers the block the same way the table above it is centered. */}
+      <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.textDim, lineHeight: 1.9, width: "fit-content", maxWidth: "100%", margin: "10px auto 0", overflowX: "auto" }}>
         {rows.map((r, idx) => (
-          <div key={idx}>
+          <div key={idx} style={{ whiteSpace: "nowrap" }}>
             <button onClick={() => onSelect(idx)} style={summaryKeyBtnStyle}>
               ({idx + 1})
             </button>{" "}
