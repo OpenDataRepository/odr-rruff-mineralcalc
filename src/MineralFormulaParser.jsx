@@ -529,7 +529,7 @@ function parseFormula(str) {
           continue;
         }
         throw new Error(
-          "Comma detected (e.g. site-sharing like '(Fe,Mg)') — not supported yet."
+          "Our automated routine does not know how to interpret this formula because of the commas."
         );
       }
 
@@ -840,34 +840,40 @@ function netChargeOfFragment(str) {
   return resolved.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
 }
 
-// A two-element site-sharing group (e.g. '(Si,Al)_8_') with a stated total
-// site count and two *different*, unambiguous valences has exactly one
-// split that brings the whole formula's net charge to zero — unlike a
-// same-valence group (e.g. '(Fe,Mg)'), where any split leaves the charge
-// unchanged and the generic 50% guess below is the best that can be done.
-// Returns the rewritten formula string (group replaced with concrete counts)
-// on success, or null if a unique physically-valid split isn't determinable
-// — in which case the caller falls back to the generic range split.
+// A site-sharing group (e.g. '(Si,Al)_8_') with a stated total site count
+// has exactly one split that brings the whole formula's net charge to zero
+// as soon as its occupants fall into two *different*, unambiguous valences
+// — unlike a same-valence group (e.g. '(Fe,Mg)'), where any split leaves
+// the charge unchanged and the generic 50% guess below is the best that can
+// be done. Occupants are grouped into valence "classes" first — e.g. in
+// '(Ca,Th^4+^,Ce^4+^)', Ca is its own 2+ class while Th and Ce share a 4+
+// class — and the charge-balance equation is solved for each CLASS's total
+// occupancy, not per occupant. With exactly two classes that pins down a
+// unique split (e.g. Brockite's Ca_.5_Th^4+^_.25_Ce^4+^_.25_, from a 2+
+// class of one and a 4+ class of two). A class with more than one member
+// still isn't fully determined on its own — any blend of Th and Ce that
+// sums to their class's share balances the same equation — so this divides
+// a class's total evenly across its members rather than picking a favorite;
+// every listed occupant stays in the result. Three or more distinct
+// valences leaves even the per-class equation underdetermined, and this
+// returns null rather than guess further.
+// Returns { formulaStr, isModifiedIdeal } on success, or null if no
+// physically-valid split is determinable — in which case the caller falls
+// back to the generic range split.
 function tryChargeBalanceSplit(formulaStr, group, parsedTokens) {
   const { start, end } = group;
-  if (parsedTokens.length !== 2) return null;
-  const [t0, t1] = parsedTokens;
-  if (!t0.valenceSet || t0.valenceSet.length !== 1) return null;
-  if (!t1.valenceSet || t1.valenceSet.length !== 1) return null;
-  const v0 = t0.valenceSet[0];
-  const v1 = t1.valenceSet[0];
-  if (v0 === v1) return null; // no unique split from charge alone
 
   // The group must actually be bracketed (not a bare comma spanning the
-  // whole formula) and carry a single plain numeric site count right after
-  // its closing bracket, e.g. the '_8_' in '(Si,Al)_8_'.
+  // whole formula). A count right after the closing bracket (e.g. the
+  // '_8_' in '(Si,Al)_8_') pins the site's total occupancy; with none, the
+  // site defaults to 1, same as any bracketed group or bare atom with no
+  // subscript of its own.
   const openIdx = start - 1;
   if (openIdx < 0 || !"([{".includes(formulaStr[openIdx])) return null;
   const afterCloser = end + 1;
   const countMatch = formulaStr.slice(afterCloser).match(/^_(\d+(?:\.\d+)?)_/);
-  if (!countMatch) return null;
-  const N = parseFloat(countMatch[1]);
-  const afterGroup = afterCloser + countMatch[0].length;
+  const N = countMatch ? parseFloat(countMatch[1]) : 1;
+  const afterGroup = countMatch ? afterCloser + countMatch[0].length : afterCloser;
 
   const rest = formulaStr.slice(0, openIdx) + formulaStr.slice(afterGroup);
   let restCharge;
@@ -877,16 +883,47 @@ function tryChargeBalanceSplit(formulaStr, group, parsedTokens) {
     return null; // rest of the formula isn't parseable on its own; bail out
   }
 
-  // Solve v0*a + v1*b = -restCharge, a + b = N.
-  const a = (-restCharge - v1 * N) / (v0 - v1);
+  // Every occupant needs a single, pinned-down valence (an explicit
+  // '^n+^', or an element with just one possible valence to begin with) to
+  // be placed in a class — one that could still be more than one thing
+  // (e.g. bare 'Fe') can't be assigned a share with any confidence, so the
+  // whole split is left undetermined rather than guessed at.
+  if (parsedTokens.some((t) => !t.valenceSet || t.valenceSet.length !== 1)) return null;
+
+  // Group occupants by their pinned valence, in the order each valence
+  // first appears in the list.
+  const classes = [];
+  for (const t of parsedTokens) {
+    const v = t.valenceSet[0];
+    let cls = classes.find((c) => c.valence === v);
+    if (!cls) {
+      cls = { valence: v, tokens: [] };
+      classes.push(cls);
+    }
+    cls.tokens.push(t);
+  }
+  if (classes.length !== 2) return null; // only a two-class split is solvable from charge alone
+
+  // Solve v0*a + v1*b = -restCharge, a + b = N, for the two classes' totals.
+  const [c0, c1] = classes;
+  const a = (-restCharge - c1.valence * N) / (c0.valence - c1.valence);
   const b = N - a;
   const EPS = 1e-9;
   if (!Number.isFinite(a) || a < -EPS || b < -EPS) return null;
 
   const clampedA = Math.min(Math.max(a, 0), N);
   const clampedB = N - clampedA;
-  const replacement = `${t0.raw}_${formatSplitNum(clampedA)}_${t1.raw}_${formatSplitNum(clampedB)}_`;
-  return formulaStr.slice(0, openIdx) + replacement + formulaStr.slice(afterGroup);
+  const shareOf = (total, cls) => total / cls.tokens.length;
+  const shareA = shareOf(clampedA, c0);
+  const shareB = shareOf(clampedB, c1);
+  const replacement = parsedTokens
+    .map((t) => `${t.raw}_${formatSplitNum(c0.tokens.includes(t) ? shareA : shareB)}_`)
+    .join("");
+
+  return {
+    formulaStr: formulaStr.slice(0, openIdx) + replacement + formulaStr.slice(afterGroup),
+    isModifiedIdeal: parsedTokens.length > 2,
+  };
 }
 
 // Parses one comma-separated occupant. A bare element symbol (optionally
@@ -897,7 +934,7 @@ function tryChargeBalanceSplit(formulaStr, group, parsedTokens) {
 // list a complex ion as one of its candidates. isComplex marks that case,
 // since it changes how the token can be substituted back into the formula
 // (see collapseMultipleCommaGroupsToLeftmost).
-function parseCommaToken(raw, inner) {
+function parseCommaToken(raw) {
   const m = raw.match(COMMA_TOKEN_RE);
   if (m) {
     const symbol = m[1];
@@ -928,9 +965,9 @@ function parseCommaToken(raw, inner) {
   let netCharge;
   try {
     netCharge = netChargeOfFragment(raw);
-  } catch (e) {
+  } catch {
     throw new Error(
-      `'${raw}' in the comma group '${inner}' isn't a single element symbol (with an optional '^n+^' valence), and doesn't parse as a group on its own either: ${e.message}`
+      "Our automated routine does not know how to interpret this formula because of the commas."
     );
   }
   return { raw, symbol: raw, valenceSet: [netCharge], fullValenceSet: [netCharge], isComplex: true };
@@ -942,9 +979,11 @@ function parseCommaToken(raw, inner) {
 function parseCommaTokens(inner) {
   const tokens = inner.split(",");
   if (tokens.some((t) => !t)) {
-    throw new Error(`Empty element between commas in '${inner}' — check for a stray or doubled comma.`);
+    throw new Error(
+      "Our automated routine does not know how to interpret this formula because of the commas."
+    );
   }
-  return tokens.map((raw) => parseCommaToken(raw, inner));
+  return tokens.map((raw) => parseCommaToken(raw));
 }
 
 // True when every occupant of a comma group is a bare element symbol
@@ -975,25 +1014,35 @@ function commaGroupHasCommonValence(parsedTokens) {
 // '(Fe,Mg)(Ca,Na)', which has no telling how the two sites' occupancies
 // should pair up), or because a site lists a multi-atom occupant (e.g.
 // '(N^3-^H_4_,K,Na)', which can't be split by a trailing subscript the way
-// a bare element can). When every group is internally same-valence, the
-// leftmost (first-listed, i.e. dominant) occupant in each group stands in
-// for the whole site, and the rest of that group's parentheses is dropped.
-// A group that isn't internally same-valence can't be resolved this way, so
-// the whole formula is rejected rather than guessed at.
+// a bare element can).
+//
+// Each group is resolved on its own merits, independent of how any other
+// group in the formula turns out: a same-valence group (every occupant
+// could plausibly carry the same charge) always collapses to its leftmost
+// (first-listed, i.e. dominant) occupant, since picking among same-valence
+// occupants never changes the formula's net charge no matter what else is
+// going on elsewhere. A heterovalent group (like '(Ca,Ce^3+^,Sr,La)') can't
+// be collapsed that way — but once every other group has been resolved to
+// something concrete, it's in exactly the position a lone heterovalent
+// group would be, so it gets the same charge-balance split (see
+// tryChargeBalanceSplit) against the now-known rest-of-formula charge. That
+// only pins down a unique answer when it's the one heterovalent group left;
+// two or more at once leaves the balance equation underdetermined, and the
+// whole formula is rejected rather than guessed at.
 function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups) {
-  // Right-to-left so each earlier group's start/end offsets stay valid as
-  // later (rightward) groups get replaced first.
+  // Phase 1: collapse every same-valence group straight to its leftmost
+  // occupant. Right-to-left so each earlier group's start/end offsets stay
+  // valid as later (rightward) groups get replaced first; a heterovalent
+  // group is left untouched (and its offsets stay valid too) for phase 2.
   const sorted = [...groups].sort((a, b) => b.start - a.start);
   let result = formulaStr;
+  let anyHeterovalent = false;
   for (const { start, end } of sorted) {
     const inner = result.slice(start, end);
     const parsedTokens = parseCommaTokens(inner);
     if (!commaGroupHasCommonValence(parsedTokens)) {
-      throw new Error(
-        `Cannot compute: the comma group '${inner}' doesn't have the same valence across its elements (${parsedTokens
-          .map((t) => `${t.symbol} [${(t.fullValenceSet || []).join(", ")}]`)
-          .join(", ")}). With more than one comma-separated site in the formula, every site's elements need to share a valence to reduce it to a single modified ideal formula.`
-      );
+      anyHeterovalent = true;
+      continue;
     }
     const leftmost = parsedTokens[0];
     // A bare element's own trailing subscript is read directly after the
@@ -1011,7 +1060,22 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups) {
     const spanEnd = stripBracket ? end + 1 : end;
     result = result.slice(0, spanStart) + leftmost.raw + result.slice(spanEnd);
   }
-  return result;
+  if (!anyHeterovalent) return result;
+
+  // Phase 2: re-locate whatever heterovalent group(s) are left in the now
+  // partially-collapsed string (their offsets shifted as phase 1 replaced
+  // text around them) and, if exactly one remains, try the same
+  // charge-balance split a lone heterovalent group gets.
+  const remaining = commaGroups(result);
+  if (remaining.length === 1 && isSimpleCommaGroup(result, remaining[0])) {
+    const parsedTokens = parseCommaTokens(result.slice(remaining[0].start, remaining[0].end));
+    const balanced = tryChargeBalanceSplit(result, remaining[0], parsedTokens);
+    if (balanced !== null) return balanced.formulaStr;
+  }
+
+  throw new Error(
+    "Our automated routine does not know how to interpret this formula because of the commas."
+  );
 }
 
 // Rewrites a formula's comma-separated site-sharing group(s) — see
@@ -1042,13 +1106,11 @@ function expandCommaGroup(formulaStr) {
   // that first, and only fall through to the generic split/validation below
   // if no unique valid solution exists.
   const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens);
-  if (balanced !== null) return { formulaStr: balanced, isModifiedIdeal: false };
+  if (balanced !== null) return balanced;
 
   if (!commaGroupHasCommonValence(parsedTokens)) {
     throw new Error(
-      `Comma issue: not same valence — '${inner}' has no valence in common (${parsedTokens
-        .map((t) => `${t.symbol} [${(t.fullValenceSet || []).join(", ")}]`)
-        .join(", ")}); a shared site needs every element to be able to carry the same charge.`
+      "Our automated routine does not know how to interpret this formula because of the commas."
     );
   }
 
