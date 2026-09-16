@@ -104,7 +104,7 @@ export async function loadCitationsForMineral(mineralId) {
   const records = Object.values(group).map(parseRecord);
   const citations = records
     .map((record) => ({
-      formula: record.empiricalFormula || record.idealFormula,
+      formula: record.empiricalFormula,
       cell: {
         a: parseFloat(record.a),
         b: parseFloat(record.b),

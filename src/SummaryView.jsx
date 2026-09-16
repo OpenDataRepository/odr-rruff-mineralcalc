@@ -382,14 +382,15 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
             )}
             {/* Only page 3's citation-comparison rows carry these — a plain
                 range/summary row (page 1/2) has neither, so this is a no-op
-                everywhere else. Shows the parsed year (not just the raw
-                citation text) so an RRUFF-ID citation's year, which isn't
-                visible in the ID itself, is still checkable at a glance. */}
+                everywhere else. displayYear is already null for a bare
+                RRUFF ID (that year is just the sample's submission year,
+                not a publication date) and for text that already spells
+                the year out — see displayYear in EmpiricalFormulasPage.jsx. */}
             {r.citation && (
               <span>
                 {" — "}
                 {r.citation}
-                {r.year != null && ` (${r.year})`}
+                {r.displayYear != null && ` (${r.displayYear})`}
               </span>
             )}
           </div>
