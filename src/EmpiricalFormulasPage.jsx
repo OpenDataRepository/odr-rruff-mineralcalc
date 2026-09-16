@@ -9,13 +9,30 @@ import { loadCitationsForMineral } from "./cellparamsLoader.js";
 // common journal-citation shape) or a bare RRUFF sample ID. An RRUFF ID is
 // "Rxxyyyy" — the two-digit xx is the sample's 20xx submission year (e.g.
 // "R250095" was submitted in 2025), yyyy is just that year's running
-// sequence number and carries no date information of its own. Returns null
-// when neither shape matches, since there's nothing to safely guess at.
+// sequence number and carries no date information of its own.
+const RRUFF_ID_PATTERN = /^R(\d{2})\d{4}$/i;
+
+// Returns null when neither shape matches, since there's nothing to safely
+// guess at.
 export function citationYear(citation) {
-  const rruffMatch = /^R(\d{2})\d{4}$/i.exec(citation.trim());
+  const rruffMatch = RRUFF_ID_PATTERN.exec(citation.trim());
   if (rruffMatch) return 2000 + Number(rruffMatch[1]);
   const yearMatch = /\((\d{4})\)/.exec(citation);
   return yearMatch ? Number(yearMatch[1]) : null;
+}
+
+// The "(YYYY)" shown next to a citation in the UI, or null to show nothing.
+// Suppressed for a bare RRUFF ID — that year is only the sample's submission
+// year (decoded from the ID itself, see citationYear above), not a
+// publication date, so appending it reads as a real citation year when it
+// isn't one. Also suppressed when the citation text already spells the year
+// out (the common journal-citation shape), so it isn't shown twice.
+function displayYear(citation, year) {
+  if (year == null) return null;
+  const trimmed = citation.trim();
+  if (RRUFF_ID_PATTERN.test(trimmed)) return null;
+  if (trimmed.includes(`(${year})`)) return null;
+  return year;
 }
 
 // Two analyze() results count as the same formula if they break down into
@@ -69,7 +86,8 @@ function buildEmpiricalRows(name, citations) {
     const formulaStr = isFormulaFormatted(formula) ? formula : parseChemicalFormula(formula);
     try {
       const result = analyze(`${name}\t${formulaStr}`);
-      if (result) rows.push({ formulaStr, result, cell, citation, year: citationYear(citation) });
+      const year = citationYear(citation);
+      if (result) rows.push({ formulaStr, result, cell, citation, year, displayYear: displayYear(citation, year) });
     } catch (e) {
       // Skip a citation that doesn't parse — the rest of the table still
       // renders.
