@@ -369,23 +369,43 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
           (formula + journal ref + year) to wrap to two lines even though
           the page has plenty of room beside it. Sizing to its own widest
           line keeps every citation on one line while margin: auto still
-          centers the block the same way the table above it is centered. */}
-      <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.textDim, lineHeight: 1.9, width: "fit-content", maxWidth: "100%", margin: "10px auto 0", overflowX: "auto" }}>
+          centers the block the same way the table above it is centered.
+          maxHeight/overflowY caps this list the same way the table itself is
+          capped above — with many citations this list could otherwise grow
+          tall enough to push "Print Report"/"Custom Formula" far down the
+          page instead of staying put right below the table. */}
+      <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.textDim, lineHeight: 1.9, width: "fit-content", maxWidth: "100%", maxHeight: 200, margin: "10px auto 0", overflowX: "auto", overflowY: "auto" }}>
         {rows.map((r, idx) => (
           <div key={idx} style={{ whiteSpace: "nowrap" }}>
             <button onClick={() => onSelect(idx)} style={summaryKeyBtnStyle}>
               ({idx + 1})
             </button>{" "}
             <span style={{ fontFamily: COLORS.mono }}>{renderFormula(r.formulaStr)}</span>
-            {r.result.isModifiedIdeal && (
-              <span style={{ color: COLORS.warn, fontWeight: 600 }}>, Modified Ideal Formula</span>
+            {/* isIdealRow marks the row(s) built from the mineral's own
+                ideal formula (as opposed to a citation's empirical formula)
+                — see empiricalFormulaRows.js's buildIdealRows, used by
+                LandingPage.jsx and MineralFormulaParser.jsx's own
+                topSummaryRows. Always labeled, so it reads as "formula —
+                Ideal IMA Formula" (or "— Modified Ideal Formula" when a
+                comma-shared site collapsed it — see isModifiedIdeal). A
+                non-ideal (citation) row only ever gets the "Modified" label,
+                and only when it applies. */}
+            {r.isIdealRow ? (
+              <span>
+                {" — "}
+                {r.result.isModifiedIdeal ? "Modified Ideal Formula" : "Ideal IMA Formula"}
+              </span>
+            ) : (
+              r.result.isModifiedIdeal && (
+                <span style={{ color: COLORS.warn, fontWeight: 600 }}>, Modified Ideal Formula</span>
+              )
             )}
-            {/* Only page 3's citation-comparison rows carry these — a plain
-                range/summary row (page 1/2) has neither, so this is a no-op
-                everywhere else. displayYear is already null for a bare
-                RRUFF ID (that year is just the sample's submission year,
-                not a publication date) and for text that already spells
-                the year out — see displayYear in EmpiricalFormulasPage.jsx. */}
+            {/* Only citation-comparison rows carry these — an ideal-formula
+                row (see isIdealRow above) has neither, so this is a no-op
+                for it. displayYear is already null for a bare RRUFF ID (that
+                year is just the sample's submission year, not a publication
+                date) and for text that already spells the year out — see
+                displayYear in empiricalFormulaRows.js. */}
             {r.citation && (
               <span>
                 {" — "}

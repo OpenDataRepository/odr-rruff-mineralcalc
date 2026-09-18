@@ -1381,13 +1381,13 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
 
   const topSummaryRows = useMemo(() => {
     if (!result) return null;
-    if (!result.isRange) return [{ formulaStr: result.formulaStr, result }];
+    if (!result.isRange) return [{ formulaStr: result.formulaStr, result, isIdealRow: true }];
     // A range column's own result doesn't carry isModifiedIdeal (that flag
     // lives on the outer analyze() result) — copy it down so each row can
     // still show the "modified ideal formula" label regardless of range.
     return [
-      { formulaStr: result.columns[0].formulaStr, result: { ...result.columns[0], isModifiedIdeal: result.isModifiedIdeal } },
-      { formulaStr: result.columns[1].formulaStr, result: { ...result.columns[1], isModifiedIdeal: result.isModifiedIdeal } },
+      { formulaStr: result.columns[0].formulaStr, result: { ...result.columns[0], isModifiedIdeal: result.isModifiedIdeal }, isIdealRow: true },
+      { formulaStr: result.columns[1].formulaStr, result: { ...result.columns[1], isModifiedIdeal: result.isModifiedIdeal }, isIdealRow: true },
     ];
   }, [result]);
 

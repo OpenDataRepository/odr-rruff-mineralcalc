@@ -94,7 +94,7 @@ function parseRecord(raw) {
 // Resolves to { mineralName, citations } for the given RRUFF cellparams
 // outer hash key (see scripts/lookup-cellparams.mjs), or null if that key
 // has no records in either script. `citations` is already in the
-// {formula, cell, citation} shape EmpiricalFormulasPage.jsx's
+// {formula, cell, citation} shape empiricalFormulaRows.js's
 // buildEmpiricalRows expects.
 export async function loadCitationsForMineral(mineralId) {
   await ensureCellparamsLoaded();
