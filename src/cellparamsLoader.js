@@ -104,7 +104,10 @@ export async function loadCitationsForMineral(mineralId) {
   const records = Object.values(group).map(parseRecord);
   const citations = records
     .map((record) => ({
-      formula: record.empiricalFormula,
+      // RRUFF's raw cellparams data uses "*" as its hydrate separator
+      // (e.g. "Ca(CO3)*H2O"); the formula formatter only recognizes the
+      // middle dot "·", so normalize here before it reaches downstream code.
+      formula: record.empiricalFormula.replace(/\*/g, "·"),
       cell: {
         a: parseFloat(record.a),
         b: parseFloat(record.b),
