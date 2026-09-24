@@ -93,6 +93,11 @@ export function renderFormula(str) {
       nodes.push(
         c === "^" ? <sup key={key++}>{raw}</sup> : <sub key={key++}>{raw}</sub>
       );
+      // A formula has no spaces, so without this the browser treats it as
+      // one unbreakable word and a long one runs off the page. A break
+      // opportunity after each subscript lets it wrap only between whole
+      // element/count units, never inside a symbol or number.
+      if (c === "_") nodes.push(<wbr key={key++} />);
       i = end + 1;
       continue;
     }

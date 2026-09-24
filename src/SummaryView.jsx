@@ -400,6 +400,28 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                 <span style={{ color: COLORS.warn, fontWeight: 600 }}>, Modified Ideal Formula</span>
               )
             )}
+            {/* A citation's generic RE/REE swapped for the specific rare
+                earth its ideal formula names — see substituteRee in
+                empiricalFormulaRows.js. */}
+            {r.reeSubstitution && (
+              <span style={{ color: COLORS.warn, fontWeight: 600 }}>
+                , {r.reeSubstitution.from} → {r.reeSubstitution.to}
+              </span>
+            )}
+            {/* Hydrogen the citation left out, filled in from the ideal
+                formula's own H count — see buildEmpiricalRows. */}
+            {r.hydrogenAdded != null && (
+              <span style={{ color: COLORS.warn, fontWeight: 600 }}>
+                , H missing, added H{r.hydrogenAdded} from IMA ideal formula
+              </span>
+            )}
+            {/* Elements the ideal formula requires that this citation never
+                mentions — see missingElements in empiricalFormulaRows.js. */}
+            {r.missingElements?.length > 0 && (
+              <span style={{ color: COLORS.warn, fontWeight: 600 }}>
+                , missing {r.missingElements.join(", ")}
+              </span>
+            )}
             {/* Only citation-comparison rows carry these — an ideal-formula
                 row (see isIdealRow above) has neither, so this is a no-op
                 for it. displayYear is already null for a bare RRUFF ID (that
@@ -429,10 +451,16 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 // Detailed breakdown for a single formula picked out of the summary table,
 // with a back button scoped to this block (not the page) so the summary
 // comparison is a click away.
-export const SummaryDetail = memo(function SummaryDetail({ result, onBack }) {
+// `row` is the summary row that was clicked, when there is one — its
+// citation (and year) are shown under the formula so the detail view still
+// says which reference the numbers came from.
+export const SummaryDetail = memo(function SummaryDetail({ result, row, onBack }) {
+  const citation = row?.citation
+    ? `${row.citation}${row.displayYear != null ? ` (${row.displayYear})` : ""}`
+    : null;
   return (
     <div style={{ marginTop: 14 }}>
-      <DetailedView result={result} onBack={onBack} />
+      <DetailedView result={result} citation={citation} onBack={onBack} />
     </div>
   );
 });

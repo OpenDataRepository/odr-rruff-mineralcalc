@@ -62,7 +62,10 @@ export default function LandingPage({ onEdit }) {
   }, [mineralId]);
 
   const citations = fetched?.citations || [];
-  const empiricalRows = useMemo(() => buildEmpiricalRows(fetched?.mineralName, citations), [fetched, citations]);
+  const empiricalRows = useMemo(
+    () => buildEmpiricalRows(fetched?.mineralName, citations, idealRows, formulaInput),
+    [fetched, citations, idealRows, formulaInput]
+  );
   const isLoadingCitations = Boolean(mineralId) && fetched === undefined && !fetchError;
 
   // Ideal formula column(s) first, citation columns after. Never deduped
@@ -132,6 +135,7 @@ export default function LandingPage({ onEdit }) {
         {openColumnIndex !== null ? (
           <SummaryDetail
             result={displayedRows[openColumnIndex].result}
+            row={displayedRows[openColumnIndex]}
             onBack={() => setOpenColumnIndex(null)}
           />
         ) : rows.length > 0 ? (
@@ -185,7 +189,14 @@ export default function LandingPage({ onEdit }) {
 
         <div style={{ marginTop: 28, display: "flex", justifyContent: "flex-end", gap: 12 }}>
           <button
-            onClick={() => onEdit(name, formulaInput)}
+            // From a detail view, start the custom formula off the formula
+            // being viewed (e.g. a citation's empirical one), not the ideal
+            // formula from the URL.
+            onClick={() =>
+              openColumnIndex !== null
+                ? onEdit(name, displayFormulaStr(displayedRows[openColumnIndex].result))
+                : onEdit(name, formulaInput)
+            }
             style={{
               background: COLORS.accent,
               border: "none",

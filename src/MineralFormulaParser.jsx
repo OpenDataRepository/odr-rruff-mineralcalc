@@ -4,130 +4,7 @@ import { COLORS, tdStyle, renderFormula, backButtonStyle, displayFormulaStr } fr
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
 import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
-
-// ---------------------------------------------------------------------------
-// Element data: symbol -> { weight, valences: [default, ...alternates] }
-// Transcribed from element_weights.txt. The first number after the weight is
-// a count field from the source file; every number after that is a possible
-// valence, with the first one used as the default when a formula doesn't
-// specify one explicitly (e.g. "^2+^").
-// ---------------------------------------------------------------------------
-const ELEMENTS = {
-  H: { weight: 1.00794, valences: [1] },
-  D: { weight: 2.0135532, valences: [1] },
-  He: { weight: 4.002602, valences: [0] },
-  Li: { weight: 6.941, valences: [1] },
-  Be: { weight: 9.012182, valences: [2] },
-  B: { weight: 10.811, valences: [3] },
-  C: { weight: 12.011, valences: [4] },
-  N: { weight: 14.00674, valences: [-3, 5] },
-  O: { weight: 15.9994, valences: [-2] },
-  F: { weight: 18.9984032, valences: [-1] },
-  Ne: { weight: 20.1797, valences: [0] },
-  Na: { weight: 22.989768, valences: [1] },
-  Mg: { weight: 24.305, valences: [2] },
-  Al: { weight: 26.981539, valences: [3] },
-  Si: { weight: 28.0855, valences: [4] },
-  P: { weight: 30.973762, valences: [5] },
-  S: { weight: 32.066, valences: [-2, 6] },
-  Cl: { weight: 35.4527, valences: [-1, 7] },
-  Ar: { weight: 39.948, valences: [0] },
-  K: { weight: 39.0983, valences: [1] },
-  Ca: { weight: 40.078, valences: [2] },
-  Sc: { weight: 44.95591, valences: [3] },
-  Ti: { weight: 47.88, valences: [4, 2, 3] },
-  V: { weight: 50.9415, valences: [5, 4, 3, 2] },
-  Cr: { weight: 51.9961, valences: [3, 6, 2] },
-  Mn: { weight: 54.93805, valences: [2, 3] },
-  Fe: { weight: 55.847, valences: [3, 2, 4] },
-  Co: { weight: 58.9332, valences: [2, 3, 4] },
-  Ni: { weight: 58.69, valences: [2, 3, 1, 4] },
-  Cu: { weight: 63.546, valences: [1, 2] },
-  Zn: { weight: 65.39, valences: [2] },
-  Ga: { weight: 69.723, valences: [3] },
-  Ge: { weight: 72.61, valences: [4] },
-  As: { weight: 74.92159, valences: [-3, 5, 3, 2] },
-  Se: { weight: 78.96, valences: [-2, 6] },
-  Br: { weight: 79.904, valences: [-1] },
-  Kr: { weight: 83.8, valences: [0] },
-  Rb: { weight: 85.4678, valences: [1] },
-  Sr: { weight: 87.62, valences: [2] },
-  Y: { weight: 88.90585, valences: [3] },
-  Zr: { weight: 91.224, valences: [4, 2, 3] },
-  Nb: { weight: 92.90638, valences: [5, 4, 3, 2] },
-  Mo: { weight: 95.94, valences: [6, 4, 5, 3, 2] },
-  Tc: { weight: 98, valences: [6] },
-  Ru: { weight: 101.07, valences: [2, 3, 4, 6, 7, 8] },
-  Rh: { weight: 102.9055, valences: [3, 4, 2, 6] },
-  Pd: { weight: 106.42, valences: [2, 4, 6] },
-  Ag: { weight: 107.8682, valences: [1, 2, 3] },
-  Cd: { weight: 112.411, valences: [2, 1] },
-  In: { weight: 114.82, valences: [3, 2, 1] },
-  Sn: { weight: 118.71, valences: [2, 4] },
-  Sb: { weight: 121.75, valences: [3, 5, -3, 4] },
-  Te: { weight: 127.6, valences: [-2, 4, 6, 2] },
-  I: { weight: 126.90447, valences: [-1, 5, 7] },
-  Xe: { weight: 131.29, valences: [0] },
-  Cs: { weight: 132.90543, valences: [1] },
-  Ba: { weight: 137.327, valences: [2] },
-  La: { weight: 138.9055, valences: [3] },
-  Ce: { weight: 140.115, valences: [3, 4] },
-  REE: { weight: 140.115, valences: [3, 4] },
-  Pr: { weight: 140.90765, valences: [3] },
-  Nd: { weight: 144.24, valences: [3, 4] },
-  Pm: { weight: 145, valences: [3] },
-  Sm: { weight: 150.36, valences: [3, 2] },
-  Eu: { weight: 151.965, valences: [2, 3] },
-  Gd: { weight: 157.25, valences: [3] },
-  Tb: { weight: 158.92534, valences: [3, 4] },
-  Dy: { weight: 162.5, valences: [3] },
-  Ho: { weight: 164.93032, valences: [3] },
-  Er: { weight: 167.26, valences: [3] },
-  Tm: { weight: 168.93421, valences: [2, 3] },
-  Yb: { weight: 173.04, valences: [3, 2] },
-  Lu: { weight: 174.967, valences: [3] },
-  Hf: { weight: 178.49, valences: [4] },
-  Ta: { weight: 180.9479, valences: [5, 4, 3] },
-  W: { weight: 183.85, valences: [6, 4, 2, 3, 5] },
-  Re: { weight: 186.207, valences: [-1, 1, 2, 3, 4, 5, 6, 7] },
-  Os: { weight: 190.2, valences: [2, 3, 4, 6, 8] },
-  Ir: { weight: 192.22, valences: [3, 4, 1, 2, 6] },
-  Pt: { weight: 195.08, valences: [2, 4, 1, 3, 6] },
-  Au: { weight: 196.96654, valences: [1, 2, 3] },
-  Hg: { weight: 200.59, valences: [2, 1] },
-  Tl: { weight: 204.3833, valences: [1, 2, 3] },
-  Pb: { weight: 207.2, valences: [2, 4] },
-  Bi: { weight: 208.98037, valences: [3, -3, 2, 4, 5] },
-  Po: { weight: 209, valences: [-2, 2, 4, 6] },
-  At: { weight: 210, valences: [-1] },
-  Rn: { weight: 222, valences: [0] },
-  Fr: { weight: 223, valences: [1] },
-  Ra: { weight: 226, valences: [2] },
-  Ac: { weight: 227, valences: [3] },
-  Th: { weight: 232.0381, valences: [4] },
-  Pa: { weight: 231.03588, valences: [5] },
-  U: { weight: 238.02891, valences: [6, 2, 3, 4, 5] },
-  Np: { weight: 237, valences: [0] },
-  Pu: { weight: 244, valences: [0] },
-  Am: { weight: 243, valences: [0] },
-  Cm: { weight: 247, valences: [0] },
-  Bk: { weight: 247, valences: [0] },
-  Cf: { weight: 251, valences: [0] },
-  Es: { weight: 252, valences: [0] },
-  Fm: { weight: 257, valences: [0] },
-  Md: { weight: 258, valences: [0] },
-  No: { weight: 259, valences: [0] },
-  Lr: { weight: 262, valences: [0] },
-  Rf: { weight: 261, valences: [0] },
-  Db: { weight: 262, valences: [0] },
-  Sg: { weight: 266, valences: [0] },
-  Bh: { weight: 264, valences: [0] },
-  Hs: { weight: 269, valences: [0] },
-  Mt: { weight: 268, valences: [0] },
-  Ds: { weight: 281, valences: [0] },
-  Rg: { weight: 272, valences: [0] },
-  Bx: { weight: 0.0, valences: [0] },
-};
+import { ELEMENTS, REE_ELEMENTS } from "./elements.js";
 
 // A subscript containing a letter is one of two very different things:
 //   Type 1 — a clean numeric range, e.g. '_4.5-2.5_': the dash just
@@ -306,17 +183,6 @@ function addCount(a, b) {
   const bHigh = typeof b === "number" ? b : b.high;
   return { low: aLow + bLow, high: aHigh + bHigh };
 }
-
-// Rare earth elements (plus the generic "Ln" placeholder for "lanthanide").
-// A comma directly followed by the literal 'REE' — e.g. site-sharing like
-// '(Y,REE)' — is the one comma pattern this parser understands: it means
-// "this site is occupied by the named REE, or generically by rare earths at
-// large." Only a member of this list is allowed to stand to the left of a
-// ',REE'; anything else is treated the same as any other unsupported comma.
-const REE_ELEMENTS = new Set([
-  "Y", "La", "Ln", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd",
-  "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
-]);
 
 // ---------------------------------------------------------------------------
 // Recursive-descent parser.
@@ -656,7 +522,14 @@ function resolveAtom(atom) {
 // Ties keep the element's first-listed (most common) valence, so this never
 // changes behavior for a formula that was already balanced under the old
 // fixed-default rule.
-function resolveAmbiguousValences(atoms) {
+//
+// valenceBounds (optional, see valenceBoundsOf) narrows an element's
+// candidates to the [min, max] valence range the mineral's own ideal formula
+// gives it — e.g. an empirical citation formula with a bare "Fe" for
+// Aerinite, whose ideal formula only has Fe^2+^/Fe^3+^, shouldn't be
+// "balanced" by reaching for Fe^4+^. An element the ideal formula doesn't
+// mention, or whose bounds rule out every candidate, keeps its full list.
+function resolveAmbiguousValences(atoms, valenceBounds) {
   const groups = [];
   const groupBySymbol = new Map();
   let fixedCharge = 0;
@@ -667,7 +540,7 @@ function resolveAmbiguousValences(atoms) {
     }
     let g = groupBySymbol.get(a.symbol);
     if (!g) {
-      g = { symbol: a.symbol, count: 0, candidates: a.ambiguousValences };
+      g = { symbol: a.symbol, count: 0, candidates: boundedCandidates(a.symbol, a.ambiguousValences, valenceBounds) };
       groupBySymbol.set(a.symbol, g);
       groups.push(g);
     }
@@ -695,6 +568,36 @@ function resolveAmbiguousValences(atoms) {
       ? { ...a, valence: chosenBySymbol.get(a.symbol), ambiguousValences: undefined }
       : a
   );
+}
+
+function boundedCandidates(symbol, candidates, valenceBounds) {
+  const bounds = valenceBounds && valenceBounds[symbol];
+  if (!bounds) return candidates;
+  const inRange = candidates.filter((v) => v >= bounds.min && v <= bounds.max);
+  return inRange.length ? inRange : candidates;
+}
+
+// Collects the valence range each element takes in an analyze() result
+// (both end-member columns, for a range formula) as { [symbol]: { min, max } }
+// — meant to be taken from a mineral's ideal formula and handed to
+// analyze()'s valenceBounds option for its empirical citation formulas.
+export function valenceBoundsOf(results) {
+  const bounds = {};
+  for (const result of results) {
+    const atomLists = result.isRange ? result.columns.map((c) => c.atoms) : [result.atoms];
+    for (const atoms of atomLists) {
+      for (const a of atoms) {
+        if (typeof a.valence !== "number") continue;
+        const b = bounds[a.symbol];
+        if (!b) bounds[a.symbol] = { min: a.valence, max: a.valence };
+        else {
+          b.min = Math.min(b.min, a.valence);
+          b.max = Math.max(b.max, a.valence);
+        }
+      }
+    }
+  }
+  return bounds;
 }
 
 // Combines atoms that share both symbol and valence into a single entry
@@ -730,8 +633,8 @@ function isMetallicFormula(atoms) {
   });
 }
 
-function computeMassAndPct(rawAtoms) {
-  const atoms = resolveAmbiguousValences(rawAtoms);
+function computeMassAndPct(rawAtoms, valenceBounds) {
+  const atoms = resolveAmbiguousValences(rawAtoms, valenceBounds);
   const totalMass = atoms.reduce((s, a) => s + (a.weight || 0) * a.count, 0);
   const netCharge = atoms.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
   const withPct = atoms.map((a) => ({
@@ -829,13 +732,14 @@ function formatSplitNum(n) {
 // which is what pins down a heterovalent split (see tryChargeBalanceSplit).
 // Range counts (Type 1/2) are collapsed to their representative value since
 // exact low/high fidelity doesn't matter for this charge estimate.
-function netChargeOfFragment(str) {
+function netChargeOfFragment(str, valenceBounds) {
   const { atoms } = parseFormula(str);
   const resolved = resolveAmbiguousValences(
     atoms
       .map(resolveAtom)
       .filter((a) => a.symbol !== "Bx")
-      .map((a) => ({ ...a, count: repCount(a.count) }))
+      .map((a) => ({ ...a, count: repCount(a.count) })),
+    valenceBounds
   );
   return resolved.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
 }
@@ -860,7 +764,7 @@ function netChargeOfFragment(str) {
 // Returns { formulaStr, isModifiedIdeal } on success, or null if no
 // physically-valid split is determinable — in which case the caller falls
 // back to the generic range split.
-function tryChargeBalanceSplit(formulaStr, group, parsedTokens) {
+function tryChargeBalanceSplit(formulaStr, group, parsedTokens, valenceBounds) {
   const { start, end } = group;
 
   // The group must actually be bracketed (not a bare comma spanning the
@@ -878,7 +782,7 @@ function tryChargeBalanceSplit(formulaStr, group, parsedTokens) {
   const rest = formulaStr.slice(0, openIdx) + formulaStr.slice(afterGroup);
   let restCharge;
   try {
-    restCharge = netChargeOfFragment(rest);
+    restCharge = netChargeOfFragment(rest, valenceBounds);
   } catch {
     return null; // rest of the formula isn't parseable on its own; bail out
   }
@@ -1029,7 +933,7 @@ function commaGroupHasCommonValence(parsedTokens) {
 // only pins down a unique answer when it's the one heterovalent group left;
 // two or more at once leaves the balance equation underdetermined, and the
 // whole formula is rejected rather than guessed at.
-function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups) {
+function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds) {
   // Phase 1: collapse every same-valence group straight to its leftmost
   // occupant. Right-to-left so each earlier group's start/end offsets stay
   // valid as later (rightward) groups get replaced first; a heterovalent
@@ -1069,7 +973,7 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups) {
   const remaining = commaGroups(result);
   if (remaining.length === 1 && isSimpleCommaGroup(result, remaining[0])) {
     const parsedTokens = parseCommaTokens(result.slice(remaining[0].start, remaining[0].end));
-    const balanced = tryChargeBalanceSplit(result, remaining[0], parsedTokens);
+    const balanced = tryChargeBalanceSplit(result, remaining[0], parsedTokens, valenceBounds);
     if (balanced !== null) return balanced.formulaStr;
   }
 
@@ -1084,7 +988,7 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups) {
 // isModifiedIdeal }: isModifiedIdeal flags a result that came from the
 // multi-group leftmost-pick collapse rather than the formula the user
 // actually typed, so the UI can label it as such.
-function expandCommaGroup(formulaStr) {
+function expandCommaGroup(formulaStr, valenceBounds) {
   const groups = commaGroups(formulaStr);
   if (groups.length === 0) return { formulaStr, isModifiedIdeal: false };
   // The numeric-range split below only works when there's exactly one
@@ -1092,7 +996,7 @@ function expandCommaGroup(formulaStr) {
   // isSimpleCommaGroup and collapseMultipleCommaGroupsToLeftmost.
   if (groups.length > 1 || !isSimpleCommaGroup(formulaStr, groups[0])) {
     return {
-      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups),
+      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds),
       isModifiedIdeal: true,
     };
   }
@@ -1105,7 +1009,7 @@ function expandCommaGroup(formulaStr) {
   // have a single charge-balanced split instead of an arbitrary range — try
   // that first, and only fall through to the generic split/validation below
   // if no unique valid solution exists.
-  const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens);
+  const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens, valenceBounds);
   if (balanced !== null) return balanced;
 
   if (!commaGroupHasCommonValence(parsedTokens)) {
@@ -1126,7 +1030,7 @@ function expandCommaGroup(formulaStr) {
 // comma-splitting — either a plain result or, if it carries its own Type 1/2
 // numeric range, the same two-column { low, high } shape analyze() has
 // always returned for ranges.
-function analyzeOne(formulaStr) {
+function analyzeOne(formulaStr, valenceBounds) {
   const { atoms: rawAtoms, rangeSpans } = parseFormula(formulaStr);
   // 'box'/Bx is a vacancy placeholder, not a real atom — it's allowed in the
   // typed formula so people can note a vacant site, but it has no mass and
@@ -1144,7 +1048,7 @@ function analyzeOne(formulaStr) {
       ...a,
       count: typeof a.count === "number" ? a.count : a.count.low,
     }));
-    return { formulaStr, isRange: false, ...computeMassAndPct(flatAtoms) };
+    return { formulaStr, isRange: false, ...computeMassAndPct(flatAtoms, valenceBounds) };
   }
 
   // Type 1 range subscript(s) present: compute the two end-member
@@ -1156,7 +1060,8 @@ function analyzeOne(formulaStr) {
       atoms.map((a) => ({
         ...a,
         count: typeof a.count === "number" ? a.count : a.count[which],
-      }))
+      })),
+      valenceBounds
     ),
     formulaStr: substituteRanges(formulaStr, rangeSpans, which),
   });
@@ -1168,7 +1073,9 @@ function analyzeOne(formulaStr) {
   };
 }
 
-export function analyze(rawInput) {
+// valenceBounds (optional, see valenceBoundsOf) limits which valence an
+// element without an explicit '^n+^' can be resolved to.
+export function analyze(rawInput, { valenceBounds } = {}) {
   // Allow "Name<TAB>Formula" pasted straight from the source list.
   const parts = rawInput.split("\t");
   const name = parts.length > 1 ? parts[0].trim() : "";
@@ -1188,9 +1095,9 @@ export function analyze(rawInput) {
   // for the ',REE' case) if there's no plain comma to expand. More than one
   // comma group instead collapses to a single leftmost-element-per-group
   // "modified ideal formula" — isModifiedIdeal flags that for the UI.
-  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(formulaStr);
+  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(formulaStr, valenceBounds);
 
-  return { name, isModifiedIdeal, originalFormulaStr, ...analyzeOne(expandedFormulaStr) };
+  return { name, isModifiedIdeal, originalFormulaStr, ...analyzeOne(expandedFormulaStr, valenceBounds) };
 }
 
 // Picks out a single end-member column from a ranged analyze() result and
@@ -1697,6 +1604,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
           topOpenColumnIndex !== null ? (
             <SummaryDetail
               result={pickColumn(result, topOpenColumnIndex)}
+              row={topSummaryRows[topOpenColumnIndex]}
               onBack={() => setTopOpenColumnIndex(null)}
             />
           ) : (
