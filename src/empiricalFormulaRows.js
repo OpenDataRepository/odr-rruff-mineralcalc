@@ -202,18 +202,24 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
     try {
       const result = analyze(`${name}\t${formulaStr}`, { valenceBounds });
       const year = citationYear(citation);
-      if (result) {
-        rows.push({
-          formulaStr,
-          result,
-          cell,
-          citation,
-          year,
-          displayYear: displayYear(citation, year),
-          reeSubstitution,
-          hydrogenAdded,
-          missingElements: missingElements(requiredElements, formulaStr),
-        });
+      const shared = {
+        cell,
+        citation,
+        year,
+        displayYear: displayYear(citation, year),
+        reeSubstitution,
+        hydrogenAdded,
+        missingElements: missingElements(requiredElements, formulaStr),
+      };
+      // A range citation (e.g. a comma-shared site like
+      // '(Mn,Fe,Sr,Ba,Mg,Zr)') splits into its two end-member columns, the
+      // same way buildIdealRows does — the range result itself has no
+      // top-level atoms for the table or sameComposition to read.
+      if (result && !result.isRange) rows.push({ formulaStr, result, ...shared });
+      if (result && result.isRange) {
+        for (const col of result.columns) {
+          rows.push({ formulaStr: col.formulaStr, result: { ...col, isModifiedIdeal: result.isModifiedIdeal }, ...shared });
+        }
       }
     } catch (e) {
       // Skip a citation that doesn't parse — the rest of the table still
