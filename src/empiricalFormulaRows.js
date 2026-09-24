@@ -165,6 +165,36 @@ function idealHydrogenCount(idealRows, idealFormulaStr) {
   return rounded > 0 ? rounded : null;
 }
 
+function totalsBySymbol(atoms) {
+  const totals = {};
+  for (const a of atoms) totals[a.symbol] = (totals[a.symbol] || 0) + a.count;
+  return totals;
+}
+
+// How much to scale the ideal formula's H count by for one citation, since
+// a citation isn't always written per the same formula unit as the ideal
+// (e.g. Caryopilite's ideal has Si_2_ but a citation reports Si_4.07_).
+// The scale comes from one element both formulas share, other than H and O
+// — O is left out because a citation missing its H usually also leaves out
+// the O of that OH/H2O. Of those shared elements, the one picked is the one
+// whose citation/ideal ratio is closest to the ratio across all of them
+// together, which favors an element that isn't being substituted on its
+// site (Caryopilite's Mn is partly replaced by Mg, so Si wins). Returns
+// null if the two formulas share no such element.
+function hydrogenScale(idealAtoms, empiricalAtoms) {
+  const ideal = totalsBySymbol(idealAtoms);
+  const empirical = totalsBySymbol(empiricalAtoms);
+  const shared = Object.keys(ideal).filter((s) => s !== "H" && s !== "O" && ideal[s] > 0 && empirical[s] > 0);
+  if (!shared.length) return null;
+  const sum = (totals) =>
+    Object.entries(totals).reduce((s, [symbol, count]) => (symbol === "H" || symbol === "O" ? s : s + count), 0);
+  const overall = sum(empirical) / sum(ideal);
+  const element = shared.reduce((best, s) =>
+    Math.abs(empirical[s] / ideal[s] - overall) < Math.abs(empirical[best] / ideal[best] - overall) ? s : best
+  );
+  return { element, idealCount: ideal[element], empiricalCount: empirical[element] };
+}
+
 // One row per citation's raw formula, converted (if it isn't already in
 // this app's ^valence^/_count_ syntax) and analyzed exactly like a formula
 // typed into the Custom Formula box. A citation whose formula fails to
@@ -191,16 +221,31 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
     const reeResult = substituteRee(converted, reeElement);
     const { reeSubstitution } = reeResult;
     let { formulaStr } = reeResult;
-    // A citation that leaves hydrogen out entirely (usually because the
-    // analysis didn't measure water/OH) gets the ideal formula's H count
-    // appended, so its weight percents aren't skewed by the missing mass.
-    let hydrogenAdded = null;
-    if (idealH && missingElements(requiredElements, formulaStr).includes("H")) {
-      hydrogenAdded = idealH;
-      formulaStr = `${formulaStr}H_${idealH}_`;
-    }
     try {
-      const result = analyze(`${name}\t${formulaStr}`, { valenceBounds });
+      let result = analyze(`${name}\t${formulaStr}`, { valenceBounds });
+      // A citation that leaves hydrogen out entirely (usually because the
+      // analysis didn't measure water/OH) gets the ideal formula's H count,
+      // scaled to the citation's own formula unit (see hydrogenScale),
+      // appended — so its weight percents aren't skewed by the missing mass.
+      // With no shared element to scale by, the ideal count goes in as is
+      // (hydrogenAdded.element is then null).
+      let hydrogenAdded = null;
+      if (result && idealH && missingElements(requiredElements, formulaStr).includes("H")) {
+        const empiricalAtoms = result.isRange ? result.columns[0].atoms : result.atoms;
+        const scale = hydrogenScale(idealRows[0].result.atoms, empiricalAtoms);
+        const count = scale
+          ? Math.round(((idealH * scale.empiricalCount) / scale.idealCount) * 1000) / 1000
+          : idealH;
+        hydrogenAdded = {
+          count,
+          idealH,
+          element: scale ? scale.element : null,
+          elementIdealCount: scale ? scale.idealCount : null,
+          elementEmpiricalCount: scale ? scale.empiricalCount : null,
+        };
+        formulaStr = `${formulaStr}H_${count}_`;
+        result = analyze(`${name}\t${formulaStr}`, { valenceBounds });
+      }
       const year = citationYear(citation);
       const shared = {
         cell,
