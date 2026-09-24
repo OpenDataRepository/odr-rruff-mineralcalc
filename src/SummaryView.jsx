@@ -114,6 +114,17 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
   );
 });
 
+// Hover text for the "H from ideal formula" note, e.g. "Added H8.14: the
+// ideal formula's H4, scaled by Si (Si2 in the ideal formula, Si4.07 here)".
+function hydrogenAddedTitle({ count, idealH, element, elementIdealCount, elementEmpiricalCount }) {
+  const n = (x) => +x.toFixed(3);
+  if (!element) return `Added H${count}: the ideal formula's H count, unscaled (no shared element to scale by)`;
+  return (
+    `Added H${count}: the ideal formula's H${idealH}, scaled by ${element} ` +
+    `(${element}${n(elementIdealCount)} in the ideal formula, ${element}${n(elementEmpiricalCount)} here)`
+  );
+}
+
 // Shows the union of elements across a set of formulas as rows, with one
 // percent-of-mass column per formula (labeled (1), (2), ...). A formula
 // missing an element that another has just gets a blank cell rather than a
@@ -409,10 +420,15 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
               </span>
             )}
             {/* Hydrogen the citation left out, filled in from the ideal
-                formula's own H count — see buildEmpiricalRows. */}
+                formula's H count scaled on a shared element — see
+                hydrogenScale in empiricalFormulaRows.js. The hover text
+                spells out the numbers. */}
             {r.hydrogenAdded != null && (
-              <span style={{ color: COLORS.warn, fontWeight: 600 }}>
-                , H missing, added H{r.hydrogenAdded} from IMA ideal formula
+              <span
+                style={{ color: COLORS.warn, fontWeight: 600 }}
+                title={hydrogenAddedTitle(r.hydrogenAdded)}
+              >
+                , H from ideal formula
               </span>
             )}
             {/* Elements the ideal formula requires that this citation never

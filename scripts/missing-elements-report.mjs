@@ -48,7 +48,7 @@ async function main() {
 
   const { records, files } = loadCellparamsRecords(file);
   const header = [
-    "Mineral", "Missing elements", "H added from ideal", "IMA ideal formula",
+    "Mineral", "Missing elements", "H added from ideal", "H scaled by", "IMA ideal formula",
     "Empirical formula (as used)", "Empirical formula (RRUFF)", "Reference", "Mineral ID", "Record ID",
   ];
   const lines = [header.map(csvCell).join(",")];
@@ -82,7 +82,8 @@ async function main() {
       [
         r.mineralName,
         missing.join(" "),
-        row.hydrogenAdded ?? "",
+        row.hydrogenAdded?.count ?? "",
+        !row.hydrogenAdded ? "" : !row.hydrogenAdded.element ? "unscaled (no shared element)" : `${row.hydrogenAdded.element} (${+row.hydrogenAdded.elementIdealCount.toFixed(3)} -> ${+row.hydrogenAdded.elementEmpiricalCount.toFixed(3)})`,
         r.idealFormula,
         row.formulaStr,
         r.empiricalFormula,
