@@ -1280,11 +1280,6 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
     setPlainFormulaNotice(null);
   }, [formulaInput]);
 
-  // A fresh formula should land back on the summary, not stay drilled into
-  // whichever column the previous one had open.
-  useEffect(() => {
-    setTopOpenColumnIndex(null);
-  }, [input]);
 
   const topSummaryRows = useMemo(() => {
     if (!result) return null;
@@ -1374,6 +1369,9 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
     if (r.error) return;
     setNameInput(r.name);
     setFormulaInput(r.formulaStr);
+    // A different mineral lands back on the summary; editing the formula
+    // in place leaves the detail view open until "Back to summary".
+    setTopOpenColumnIndex(null);
   }, []);
 
   function handleBatchSearchChange(e) {
@@ -1603,8 +1601,10 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
         {result && !error && (
           topOpenColumnIndex !== null ? (
             <SummaryDetail
-              result={pickColumn(result, topOpenColumnIndex)}
-              row={topSummaryRows[topOpenColumnIndex]}
+              // Clamped because an edit can turn a two-column range formula
+              // into a single one while the detail view stays open.
+              result={pickColumn(result, Math.min(topOpenColumnIndex, topSummaryRows.length - 1))}
+              row={topSummaryRows[Math.min(topOpenColumnIndex, topSummaryRows.length - 1)]}
               onBack={() => setTopOpenColumnIndex(null)}
             />
           ) : (
