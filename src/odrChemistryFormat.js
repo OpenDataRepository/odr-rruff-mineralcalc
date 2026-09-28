@@ -60,6 +60,11 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
       if (i + 1 < len) next_char = chars[i + 1];
       let next_next_char = "";
       if (i + 2 < len) next_next_char = chars[i + 2];
+      // A valence the user already wrapped, e.g. the "3+" in "Ne^3+^.68" —
+      // its opening '^' is already in the output, so the "closed valence
+      // right before this" check below has to let it through.
+      let is_prewrapped_valence =
+        prev_char === superscript_delimiter && next_next_char === superscript_delimiter;
 
       if (prev_char === "(" || prev_char === "[") {
         // ...due to being preceeded by an opening parenthesis or bracket, this is
@@ -86,7 +91,7 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
       } else if (
         (next_char === "+" || next_char === "-") &&
         next_next_char !== "x" &&
-        !output.endsWith(superscript_delimiter)
+        (is_prewrapped_valence || !output.endsWith(superscript_delimiter))
       ) {
         // ...due to a '+' or '-' character that's not followed by an 'x', it's most
         //  likely a valence state  e.g.  Abelsonite: "Ni2+C31H32N4" => "Ni^2+^..."
@@ -97,7 +102,7 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
         // "Fe3+3-6" => "Fe^3+^_3-6_", not "Fe^3+^^3-^_6_". Falls through to the
         // generic numeric-sequence branch below, which already knows how to
         // consume a dash as part of one subscript run.
-        if (prev_char === superscript_delimiter && next_next_char === superscript_delimiter) {
+        if (is_prewrapped_valence) {
           // It looks like this sequence is already wrapped with delimiters...don't
           //  duplicate them
           output += char + next_char + superscript_delimiter;
@@ -236,6 +241,19 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
  * @returns {boolean}
  */
 export function isFormulaFormatted(formula, subscript_delimiter = "_", superscript_delimiter = "^") {
+  // A partly formatted formula, e.g. "Ne^3+^.68Ca.17", still has plain
+  // counts that need converting. Strip the wrapped segments and any hydrate
+  // coefficient (bare in formatted syntax, e.g. "·3H_2_O") — a digit left
+  // over is an unwrapped count, so the formula isn't fully formatted yet.
+  const esc = (d) => d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sub = esc(subscript_delimiter);
+  const sup = esc(superscript_delimiter);
+  const leftover = formula
+    .replace(new RegExp(`${sub}[^${sub}]*${sub}`, "g"), "")
+    .replace(new RegExp(`${sup}[^${sup}]*${sup}`, "g"), "")
+    .replace(/[·⋅•][0-9.x-]*/g, "");
+  if (/[0-9]/.test(leftover)) return false;
+
   let has_number = false;
   let has_format_char = false;
   for (let i = 0; i < formula.length; i++) {
