@@ -33,3 +33,5 @@ Thumbs.db
 # RRUFF bulk data dumps (fetched locally, not source)
 cellparams_data.js
 cellparams_data_update.js
+mineral_data.js
+mineral_data_update.js

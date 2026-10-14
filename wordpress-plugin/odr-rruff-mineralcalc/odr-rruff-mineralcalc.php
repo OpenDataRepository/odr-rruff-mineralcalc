@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ODR RRUFF Mineral Calculator
  * Description: A plugin that gives a way to break down a mineral's valence formula into its elemental mass percentages, formula mass, and net charge
- * Version: 1.3.3
+ * Version: 1.3.4
  */
 
 if (!defined('ABSPATH')) {
@@ -59,3 +59,12 @@ function ormc_shortcode() {
     return '<div id="mineral-parser-root"></div>';
 }
 add_shortcode('odr-rruff-mineralcalc', 'ormc_shortcode');
+
+// The metrics page, meant for its own page: the same bundle and root div,
+// with data-view="metrics" telling main.jsx to show it instead of the
+// calculator.
+function ormc_metrics_shortcode() {
+    ormc_enqueue_assets();
+    return '<div id="mineral-parser-root" data-view="metrics"></div>';
+}
+add_shortcode('odr-rruff-mineralcalc-metrics', 'ormc_metrics_shortcode');
