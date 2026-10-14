@@ -122,3 +122,51 @@ export async function loadCitationsForMineral(mineralId) {
 
   return { mineralName: records[0]?.mineralName || "", citations };
 }
+
+// Every record in both scripts, as parseRecord's fields plus `mineralId`
+// (the outer hash key) — what the metrics page counts over.
+export async function loadAllCellparamsRecords() {
+  await ensureCellparamsLoaded();
+  return Object.entries(window.cellparams || {}).flatMap(([mineralId, group]) =>
+    Object.values(group).map((raw) => ({ mineralId, ...parseRecord(raw) }))
+  );
+}
+
+// The IMA Mineral List's own data — every mineral on the list, not just the
+// ones with cell parameters. Same two-file, same-origin setup as the
+// cellparams scripts above, and the same reliance on globals the IMA list
+// page normally declares first (the data scripts only assign into them).
+const MINERAL_LIST_SCRIPT_URLS = [
+  "/odr_rruff/uploads/IMA/mineral_data.js",
+  "/odr_rruff/uploads/IMA/mineral_data_update.js",
+];
+
+let mineralListPromise = null;
+
+function ensureMineralListLoaded() {
+  if (!mineralListPromise) {
+    window.minerals_by_name = window.minerals_by_name || [];
+    window.mineral_keys = window.mineral_keys || {};
+    window.mineral_name_keys = window.mineral_name_keys || {};
+    window.mineral_data_array = window.mineral_data_array || {};
+    mineralListPromise = (async () => {
+      for (const url of MINERAL_LIST_SCRIPT_URLS) {
+        await loadScript(url);
+      }
+    })();
+  }
+  return mineralListPromise;
+}
+
+// Every mineral on the IMA list as { mineralId, mineralName, imaFormula,
+// valenceFormula }. Each mineral_data_array entry is a '||'-separated row;
+// field 12 is the "Ideal IMA Formula" and field 13 the same formula with
+// valences ("Valence Chemistry"), the one the list's Formula Weights button
+// sends to this calculator. mineralId is the same key cellparams uses.
+export async function loadImaMineralList() {
+  await ensureMineralListLoaded();
+  return Object.entries(window.mineral_data_array || {}).map(([mineralId, raw]) => {
+    const d = raw.split("||");
+    return { mineralId, mineralName: d[0] || "", imaFormula: d[12] || "", valenceFormula: d[13] || "" };
+  });
+}

@@ -154,7 +154,7 @@ function missingElements(requiredElements, empiricalFormulaStr) {
 // minerals), and an unknown multiplier like the 'n' in '·nH_2_O', which the
 // parser skips over as if it were 1.
 const ELEMENT_LIST_RE = /^\s*[A-Z][a-z]?(\^?\d*[+-]\^?)?(\s+[A-Z][a-z]?(\^?\d*[+-]\^?)?)+\s*$/;
-const UNKNOWN_MULTIPLIER_RE = /(^|[^A-Za-z])[nxy](?=[A-Z([{])/;
+export const UNKNOWN_MULTIPLIER_RE = /(^|[^A-Za-z])[nxy](?=[A-Z([{])/;
 function idealHydrogenCount(idealRows, idealFormulaStr) {
   if (ELEMENT_LIST_RE.test(idealFormulaStr || "") || UNKNOWN_MULTIPLIER_RE.test(idealFormulaStr || "")) return null;
   const counts = idealRows.map((r) =>

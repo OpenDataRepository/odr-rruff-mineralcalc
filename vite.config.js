@@ -13,5 +13,9 @@ export default defineConfig({
   build: {
     outDir: "wordpress-plugin/odr-rruff-mineralcalc/dist",
     emptyOutDir: true,
+    // public/ only holds RRUFF's IMA list and cellparams data for local dev
+    // (see metrics.html) — ~45 MB the plugin must not ship; on the live site
+    // it's loaded from rruff.net's own copy.
+    copyPublicDir: false,
   },
 });
