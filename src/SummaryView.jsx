@@ -1,5 +1,5 @@
 import React, { memo, useMemo } from "react";
-import { COLORS, renderFormula, backButtonStyle } from "./shared.jsx";
+import { COLORS, renderFormula, renderMineralName, backButtonStyle } from "./shared.jsx";
 import DetailedView from "./DetailedView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
 
@@ -99,7 +99,7 @@ export const FormulaHeader = memo(function FormulaHeader({ title, formulaStr, on
       <div style={onBack ? { flex: "1 1 auto", minWidth: 0 } : { textAlign: "center", maxWidth: 780 }}>
         {title && (
           <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
-            {title}
+            {renderMineralName(title)}
             {formulaStr && ", "}
             {formulaStr && renderFormula(formulaStr)}
           </div>
@@ -285,10 +285,14 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                     {symbol}
                   </td>
                   {rows.map((r, idx) => {
-                    const atom = r.result.atoms.find((a) => a.symbol === symbol);
+                    // An element can appear in several rows (e.g. Fe2+ and Fe3+
+                    // in magnetite), so sum all of them rather than taking the first.
+                    const matches = r.result.atoms.filter((a) => a.symbol === symbol);
+                    const atom = matches.length > 0;
+                    const percent = matches.reduce((sum, a) => sum + a.percent, 0);
                     return (
                       <td key={idx} style={{ ...summaryTdStyle, color: atom ? COLORS.accent : COLORS.textDim, fontWeight: 700 }}>
-                        {atom ? atom.percent.toFixed(3) : "—"}
+                        {atom ? percent.toFixed(3) : "—"}
                       </td>
                     );
                   })}

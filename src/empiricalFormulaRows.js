@@ -39,11 +39,17 @@ function displayYear(citation, year) {
 // what lets differently-written formulas for the same substance register as
 // the same underlying chemistry.
 export function sameComposition(resultA, resultB) {
-  if (resultA.atoms.length !== resultB.atoms.length) return false;
-  return resultA.atoms.every((atomA) => {
-    const atomB = resultB.atoms.find((a) => a.symbol === atomA.symbol);
-    return atomB && atomA.percent.toFixed(3) === atomB.percent.toFixed(3);
-  });
+  // An element can appear in several rows (e.g. Fe2+ and Fe3+), so compare
+  // each element's total percent rather than row by row.
+  const totals = (result) => {
+    const map = new Map();
+    for (const a of result.atoms) map.set(a.symbol, (map.get(a.symbol) ?? 0) + a.percent);
+    return map;
+  };
+  const a = totals(resultA);
+  const b = totals(resultB);
+  if (a.size !== b.size) return false;
+  return [...a].every(([symbol, pct]) => b.has(symbol) && pct.toFixed(3) === b.get(symbol).toFixed(3));
 }
 
 // Drops a citation row when an earlier-kept row already reports the same

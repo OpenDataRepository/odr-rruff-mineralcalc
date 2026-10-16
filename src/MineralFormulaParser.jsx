@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef, useLayoutEffect, memo } from "react";
 import { loadMineralsFromFile, loadMineralsFromApi } from "./mineralDataSources.js";
-import { COLORS, tdStyle, renderFormula, backButtonStyle, displayFormulaStr } from "./shared.jsx";
+import { COLORS, tdStyle, renderFormula, renderMineralName, backButtonStyle, displayFormulaStr } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
 import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
@@ -1197,7 +1197,7 @@ export const EXAMPLES = [
 // there's no live database to point it at yet — flip this on once there is.
 const SHOW_API_LOADER = false;
 
-export default function MineralFormulaParser({ initialName, initialFormula, onBack } = {}) {
+export default function MineralFormulaParser({ initialName, initialFormula, initialOpenDetail, onBack } = {}) {
   const [nameInput, setNameInput] = useState(() => {
     if (initialName) return initialName;
     const params = new URLSearchParams(window.location.search);
@@ -1229,8 +1229,10 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   const [apiError, setApiError] = useState(null);
   // Which summary column ("(1)"/"(2)") — if any — has been opened into its
   // full detail, for the single-formula box's result (shared by both the
-  // typed formula and any mineral picked from the batch list below).
-  const [topOpenColumnIndex, setTopOpenColumnIndex] = useState(null);
+  // typed formula and any mineral picked from the batch list below). Starts
+  // open when "Custom Formula" was clicked from a detail view, which hands
+  // over that one column's formula, so it's always column 0 here.
+  const [topOpenColumnIndex, setTopOpenColumnIndex] = useState(initialOpenDetail ? 0 : null);
 
   const result = useMemo(() => {
     try {
@@ -2054,7 +2056,7 @@ const BatchTable = memo(function BatchTable({ rows, onRowClick, selectedIds, onT
                 </td>
                 <td style={{ ...tdStyle, textAlign: "left" }}>
                   <div style={{ fontWeight: 600, fontSize: BATCH_ROW_MAX_FONT_SIZE }}>
-                    {r.name}
+                    {r.name && renderMineralName(r.name)}
                     {r.name && ","}
                   </div>
                   <div
@@ -2198,7 +2200,12 @@ const ErrorsPanel = memo(function ErrorsPanel({ rows, onDownload }) {
           lineHeight: 1.7,
         }}
       >
-        {rows.map((r) => r.name).join(", ")}
+        {rows.map((r, i) => (
+          <React.Fragment key={r.id ?? i}>
+            {i > 0 && ", "}
+            {renderMineralName(r.name || "")}
+          </React.Fragment>
+        ))}
       </div>
     </div>
   );

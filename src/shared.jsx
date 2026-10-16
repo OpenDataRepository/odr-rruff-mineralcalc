@@ -1,6 +1,9 @@
 // Shared theme tokens and helpers used across the main parser view,
 // the detailed breakdown view, and the summary comparison view.
 
+import { Fragment } from "react";
+import { parseChemicalFormula } from "./odrChemistryFormat.js";
+
 export const COLORS = {
   bg: "#ffffff",
   panel: "#f2f6f9",
@@ -69,7 +72,7 @@ export function plainFormulaString(str) {
 
 // Renders a formula string's '^2+^' / '_2_' notation as real <sup>/<sub>
 // elements, e.g. "Pb^2+^_2_" -> Pb, <sup>2+</sup>, <sub>2</sub>.
-export function renderFormula(str) {
+export function renderFormula(str, { boxGlyph = true } = {}) {
   const nodes = [];
   let buf = "";
   let key = 0;
@@ -107,7 +110,7 @@ export function renderFormula(str) {
     // string this renders from still has the literal word 'box' in it, so
     // batch search (which matches against that raw string, not this output)
     // still finds it by typing "box".
-    if (str.slice(i, i + 3).toLowerCase() === "box") {
+    if (boxGlyph && str.slice(i, i + 3).toLowerCase() === "box") {
       buf += "☐";
       i += 3;
       continue;
@@ -117,4 +120,29 @@ export function renderFormula(str) {
   }
   flush();
   return nodes;
+}
+
+// A run of a name that reads as a chemical formula: element symbols and
+// brackets, each optionally followed by a count of at most three digits and
+// a valence sign, e.g. "(Fe3+)", "NH4", "AlSO4(OH)". It has to stand alone
+// (not touch other letters or digits), so a polytype suffix such as the
+// "4H" in "Berndtite-4H" or an IMA number like "IMA2009-079" never matches.
+const NAME_FORMULA_RUN =
+  /(?<![\w.])(?:(?:[A-Z][a-z]?|[()[\]])(?:\d{1,3}(?:\.\d+)?(?:[+-](?![\w]))?)?)+(?![\w.])/g;
+
+// Mineral names use the same markup as formulas, e.g. "Cuatrocapaite-(NH_4_)"
+// or "Ixiolite-(Mn^2+^)". A name typed without it, e.g. "Ixiolite-(Fe3+)",
+// gets its formula-looking runs put through the ODR formatter first. A name
+// that already has '_' / '^' markup is taken as written. <i>…</i> (used for
+// polytype letters, e.g. "Wollastonite-2<i>M</i>") renders as italics, and a
+// "box" inside a name is left as a word instead of the vacancy glyph.
+export function renderMineralName(str) {
+  if (!str) return [];
+  const formatted = /[_^]/.test(str)
+    ? str
+    : str.replace(NAME_FORMULA_RUN, (run) => (/\d/.test(run) ? parseChemicalFormula(run) : run));
+  return formatted.split(/<i>(.*?)<\/i>/i).map((part, i) => {
+    const nodes = renderFormula(part, { boxGlyph: false });
+    return i % 2 ? <em key={i}>{nodes}</em> : <Fragment key={i}>{nodes}</Fragment>;
+  });
 }
