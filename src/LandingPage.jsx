@@ -12,15 +12,33 @@ import { buildIdealRows, buildEmpiricalRows, collapseMatchingRows } from "./empi
 // comparison table instead of a click-through to a second page. "Custom
 // Formula" is the way into the full page-2 editor (name field, batch
 // upload, etc.), carrying over the formula shown here.
+// A query parameter, decoded by hand instead of with URLSearchParams: that
+// turns every bare '+' into a space, and links don't always encode the name,
+// so "?mineral=Ixiolite-(Fe2+)" came through as "Ixiolite-(Fe2 )". A '+'
+// right after a digit is a valence sign and is kept (unless a "-" follows,
+// as in "SO4+-+hydrotalcite"); any other bare '+' is still read as a space.
+function getQueryParam(key) {
+  for (const pair of window.location.search.slice(1).split("&")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1 || pair.slice(0, eq) !== key) continue;
+    const raw = pair.slice(eq + 1).replace(/(?<!\d)\+|\+(?=-)/g, " ");
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return null;
+}
+
 export default function LandingPage({ onEdit }) {
   const [name, formulaInput, mineralId] = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    const mineral = params.get("mineral");
-    const formula = params.get("formula");
+    const mineral = getQueryParam("mineral");
+    const formula = getQueryParam("formula");
     // The RRUFF cellparams outer hash key for this mineral (see
     // scripts/lookup-cellparams.mjs) — used to look up its citation table by
     // ID instead of by name.
-    const id = params.get("ID");
+    const id = getQueryParam("ID");
     if (mineral && formula) return [mineral, formula, id];
     return [...EXAMPLES[0].split("\t"), null];
   }, []);
@@ -194,8 +212,8 @@ export default function LandingPage({ onEdit }) {
             // formula from the URL.
             onClick={() =>
               openColumnIndex !== null
-                ? onEdit(name, displayFormulaStr(displayedRows[openColumnIndex].result))
-                : onEdit(name, formulaInput)
+                ? onEdit(name, displayFormulaStr(displayedRows[openColumnIndex].result), true)
+                : onEdit(name, formulaInput, false)
             }
             style={{
               background: COLORS.accent,

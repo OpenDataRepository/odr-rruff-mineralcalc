@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { COLORS, renderFormula, backButtonStyle, displayFormulaStr } from "./shared.jsx";
+import { COLORS, renderFormula, renderMineralName, backButtonStyle, displayFormulaStr } from "./shared.jsx";
 
 const detailTdStyle = {
   padding: "7px 4px",
@@ -39,8 +39,10 @@ function Stat({ label, value, warn }) {
         background: COLORS.panel,
         border: `1px solid ${COLORS.border}`,
         borderRadius: 8,
-        padding: "10px 16px",
-        minWidth: 140,
+        padding: "10px 12px",
+        flex: "1 1 0",
+        minWidth: 0,
+        whiteSpace: "nowrap",
       }}
     >
       <div
@@ -68,10 +70,12 @@ function Stat({ label, value, warn }) {
   );
 }
 
+// Valences are integers except when a bracketed group's charge is split across
+// its atoms (e.g. (O2)^1-^ gives -0.5 each), so only those keep any decimals.
 export function valenceLabel(a) {
   return a.valence === null || a.valence === undefined
     ? "—"
-    : (a.valence > 0 ? "+" : "") + a.valence.toFixed(1);
+    : (a.valence > 0 ? "+" : "") + Number(a.valence.toFixed(2));
 }
 
 const DETAIL_HEADERS_METALLIC = DETAIL_HEADERS.filter((h) => h.label !== "Valence");
@@ -94,6 +98,14 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
   const showValence = !result.isMetallic;
   const headers = showValence ? DETAIL_HEADERS : DETAIL_HEADERS_METALLIC;
   const colWidths = showValence ? DETAIL_COL_WIDTHS : DETAIL_COL_WIDTHS_METALLIC;
+  // Cations (M) and anions (X) are the summed counts of the atoms with a
+  // positive or negative valence; atoms with no known valence count as neither.
+  let cationCount = 0;
+  let anionCount = 0;
+  for (const a of result.atoms) {
+    if (a.valence > 0) cationCount += a.count;
+    else if (a.valence < 0) anionCount += a.count;
+  }
   return (
     <div style={{ maxWidth: 640, margin: "22px auto 0" }}>
       {(result.name || onBack) && (
@@ -118,7 +130,7 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
           }}
         >
           <div style={{ fontSize: 18, fontWeight: 700, minWidth: 0 }}>
-            {result.name && <div>{result.name},</div>}
+            {result.name && <div>{renderMineralName(result.name)},</div>}
             <div>{renderFormula(displayFormulaStr(result))}</div>
             {citation && (
               <div style={{ fontSize: 12.5, fontWeight: 400, color: COLORS.textDim, marginTop: 4, paddingBottom: 6 }}>
@@ -134,7 +146,7 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
         <Stat label="Formula mass" value={`${result.totalMass.toFixed(3)} g/mol`} />
         {showValence && (
           <Stat
@@ -143,6 +155,8 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
             warn={Math.abs(result.netCharge) > 0.001}
           />
         )}
+        {showValence && <Stat label="Cations (M)" value={cationCount.toFixed(3)} />}
+        {showValence && <Stat label="Anions (X)" value={anionCount.toFixed(3)} />}
       </div>
 
       <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", maxWidth: 640 }}>

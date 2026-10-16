@@ -1,5 +1,5 @@
 import React, { Fragment, useEffect, useMemo, useState } from "react";
-import { COLORS, tdStyle, renderFormula } from "./shared.jsx";
+import { COLORS, tdStyle, renderFormula, renderMineralName } from "./shared.jsx";
 import { loadAllCellparamsRecords, loadImaMineralList } from "./cellparamsLoader.js";
 import { groupMinerals, computeAllFacts, METRICS, METRICS_BY_ID, IMPRECISE_REASONS } from "./formulaMetrics.js";
 
@@ -234,7 +234,7 @@ function FormulaList({ rows, selected }) {
             {shown.map((r, i) => (
               <Fragment key={`${r.mineralId}-${i}`}>
                 <tr>
-                  <td style={{ ...td, fontFamily: "inherit" }}>{r.mineral}</td>
+                  <td style={{ ...td, fontFamily: "inherit" }}>{r.mineral && renderMineralName(r.mineral)}</td>
                   <FormulaCells r={r} />
                   {isIdeal ? (
                     <td style={td}>
