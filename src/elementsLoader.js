@@ -9,13 +9,19 @@ function elementsUrl() {
   return document.getElementById("mineral-parser-root")?.dataset.elementsUrl || "/odr_rruff/api/elements";
 }
 
-// "-2,6" -> [-2, 6]; the first is the default.
+// "-2,6" -> [-2, 6]; the first is the default. Also takes a trailing sign
+// ("2-", "3+") and ignores empty entries ("2,3,").
 function parseValences(symbol, text) {
-  const parts = String(text ?? "").split(",").map((s) => s.trim());
-  if (!parts.every((p) => /^[+-]?\d+$/.test(p))) {
+  const parts = String(text ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const valences = parts.map((p) => {
+    const m = p.match(/^([+-]?)(\d+)([+-]?)$/);
+    if (!m || (m[1] && m[3])) return NaN;
+    return (m[1] === "-" || m[3] === "-" ? -1 : 1) * Number(m[2]);
+  });
+  if (valences.length === 0 || valences.some(Number.isNaN)) {
     throw new Error(`${symbol}: valence "${text}" isn't a comma-separated list of whole numbers`);
   }
-  return parts.map(Number);
+  return valences;
 }
 
 // { symbol: { weight, valences } }, or throws naming the bad record.
