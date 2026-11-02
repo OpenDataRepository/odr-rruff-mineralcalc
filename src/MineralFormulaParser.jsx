@@ -529,7 +529,20 @@ function resolveAtom(atom) {
 // Aerinite, whose ideal formula only has Fe^2+^/Fe^3+^, shouldn't be
 // "balanced" by reaching for Fe^4+^. An element the ideal formula doesn't
 // mention, or whose bounds rule out every candidate, keeps its full list.
+//
+// A valence written in the formula itself (an explicit '^n+^', e.g. from an
+// AMC file's atom labels) is never changed, and it also limits the element's
+// bare atoms to the valence(s) given — so an AMC formula with some Mn sites
+// labelled Mn2+ and the rest unlabelled stays all Mn2+, rather than the
+// unlabelled part being turned into Mn3+ to balance the charge. This takes
+// precedence over valenceBounds.
 function resolveAmbiguousValences(atoms, valenceBounds) {
+  const givenBySymbol = new Map();
+  for (const a of atoms) {
+    if (a.explicitValence === null || a.explicitValence === undefined) continue;
+    if (!givenBySymbol.has(a.symbol)) givenBySymbol.set(a.symbol, []);
+    if (!givenBySymbol.get(a.symbol).includes(a.explicitValence)) givenBySymbol.get(a.symbol).push(a.explicitValence);
+  }
   const groups = [];
   const groupBySymbol = new Map();
   let fixedCharge = 0;
@@ -540,7 +553,9 @@ function resolveAmbiguousValences(atoms, valenceBounds) {
     }
     let g = groupBySymbol.get(a.symbol);
     if (!g) {
-      g = { symbol: a.symbol, count: 0, candidates: boundedCandidates(a.symbol, a.ambiguousValences, valenceBounds) };
+      const candidates =
+        givenBySymbol.get(a.symbol) || boundedCandidates(a.symbol, a.ambiguousValences, valenceBounds);
+      g = { symbol: a.symbol, count: 0, candidates };
       groupBySymbol.set(a.symbol, g);
       groups.push(g);
     }
@@ -634,7 +649,9 @@ function isMetallicFormula(atoms) {
 }
 
 function computeMassAndPct(rawAtoms, valenceBounds) {
-  const atoms = resolveAmbiguousValences(rawAtoms, valenceBounds);
+  // Merged again once resolved, so a bare atom that took the same valence as
+  // an explicit one (e.g. bare Mn next to Mn^2+^) shares its row.
+  const atoms = mergeAtoms(resolveAmbiguousValences(rawAtoms, valenceBounds));
   const totalMass = atoms.reduce((s, a) => s + (a.weight || 0) * a.count, 0);
   const netCharge = atoms.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
   const withPct = atoms.map((a) => ({

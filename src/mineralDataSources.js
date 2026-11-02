@@ -117,27 +117,32 @@ export function getRecordField(record, fieldName) {
   return String(field.value);
 }
 
-// Valences from the AMC atom labels, or { error } if the AMC text can't be read.
+// The chemistry computed from the AMC atom table, with its label valences,
+// or { error } if the record has no AMC file or it can't be read. The
+// record's Chemistry field isn't passed in: it's filled from the original
+// CIF, which isn't a reliable source for chemistry, while the AMC file is
+// the one edited until the chemistry is right.
 function amcValencesOf(record) {
   const amcText = getRecordField(record, "AMC File Contents");
   if (!amcText) return { error: "The record has no AMC File Contents" };
   try {
-    return amcValenceChemistry(amcText, getRecordField(record, "Chemistry"));
+    return amcValenceChemistry(amcText);
   } catch (e) {
     return { error: e.message };
   }
 }
 
-// The record as a citation column: its Chemistry (split by label valences
-// when usable), cell and journal line.
+// The record as a citation column: the chemistry from its AMC file (the
+// Chemistry field only when there's no readable AMC file), cell and journal
+// line.
 function amcsdCitationOf(record) {
-  const chemistry = getRecordField(record, "Chemistry");
-  if (!chemistry) return null;
   const amcValences = amcValencesOf(record);
+  const formula = amcValences.error ? getRecordField(record, "Chemistry") : amcValences.formulaStr;
+  if (!formula) return null;
   const cellField = (name) => parseFloat(getRecordField(record, name));
   const amcLines = (getRecordField(record, "AMC File Contents") || "").split(/\r?\n/);
   return {
-    formula: amcValences.usable ? amcValences.formulaStr : chemistry,
+    formula,
     cell: {
       a: cellField("a"),
       b: cellField("b"),
@@ -159,7 +164,7 @@ export async function loadMineralForAmcsdRecord(uuid, options) {
   const mineral = (record.records || []).find((child) => getRecordField(child, "Valence Formula"));
   if (!mineral) throw new Error("The AMCSD record has no linked IMA mineral with a valence formula");
   const citation = amcsdCitationOf(record);
-  if (!citation) throw new Error("The AMCSD record has no Chemistry field");
+  if (!citation) throw new Error("The AMCSD record has no readable AMC file and no Chemistry field");
   return {
     name: getRecordField(mineral, "Mineral Name") || getRecordField(record, "Mineral"),
     formulaStr: getRecordField(mineral, "Valence Formula"),
