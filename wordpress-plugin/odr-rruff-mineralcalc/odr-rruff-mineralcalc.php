@@ -196,11 +196,64 @@ function ormc_rest_record(WP_REST_Request $request) {
     return rest_ensure_response($data);
 }
 
+// The RRUFF sample with a RRUFF ID (e.g. R040002), found with the API's
+// dataset search, since a microprobe record has no link to its sample.
+define('ORMC_RRUFF_SAMPLE_DB', 'ddc5e9ba834ad596cc31aebb1225');
+define('ORMC_RRUFF_SAMPLE_SEARCH_URL', 'https://www.rruff.net/odr_rruff/api/v4/dataset/' . ORMC_RRUFF_SAMPLE_DB . '/search/10/0.json');
+define('ORMC_RRUFF_ID_FIELD_UUID', 'ee88404d73886150b59dd07cbb12');
+
+function ormc_rest_rruff_sample(WP_REST_Request $request) {
+    $rruff_id = strtoupper($request['rruff_id']);
+    list($token, $token_error) = ormc_api_token();
+    if ($token === '') {
+        return ormc_rest_error('The server could not get an API token.', $token_error, 500);
+    }
+
+    $res = wp_remote_post(ORMC_RRUFF_SAMPLE_SEARCH_URL, array(
+        'headers' => array('Authorization' => 'Bearer ' . $token, 'Content-Type' => 'application/json'),
+        'body'    => wp_json_encode(array(
+            'dataset_uuid' => ORMC_RRUFF_SAMPLE_DB,
+            'fields'       => array(array('field_uuid' => ORMC_RRUFF_ID_FIELD_UUID, 'value' => $rruff_id)),
+        )),
+        'timeout' => 30,
+    ));
+    if (is_wp_error($res)) {
+        return ormc_rest_error('The sample search request to the API failed.', $res->get_error_message(), 502);
+    }
+
+    $code = wp_remote_retrieve_response_code($res);
+    if ($code === 401 || $code === 403) {
+        delete_transient('ormc_api_token_cache');
+        return ormc_rest_error('Sample search failed: ' . $code . ' - the API rejected the token.', '', $code);
+    }
+    if ($code < 200 || $code >= 300) {
+        return ormc_rest_error('Sample search failed: ' . $code . '.', '', 502);
+    }
+
+    $data = json_decode(trim(wp_remote_retrieve_body($res)), true);
+    if (!is_array($data)) {
+        return ormc_rest_error('The API returned a search result that is not valid JSON.', '', 502);
+    }
+    // The search can match partly, so keep only an exact RRUFF ID.
+    foreach ((array) ($data['records'] ?? array()) as $record) {
+        if (isset($record['record_name']) && strtoupper((string) $record['record_name']) === $rruff_id) {
+            return rest_ensure_response($record);
+        }
+    }
+    return ormc_rest_error('No RRUFF sample ' . $rruff_id . ' was found.', '', 404);
+}
+
 add_action('rest_api_init', function () {
     register_rest_route('odr-rruff-mineralcalc/v1', '/record/(?P<uuid>[0-9a-fA-F]{1,64})', array(
         'methods'             => 'GET',
         'callback'            => 'ormc_rest_record',
         // Public; the uuid pattern limits it to record lookups.
+        'permission_callback' => '__return_true',
+    ));
+    register_rest_route('odr-rruff-mineralcalc/v1', '/rruff-sample/(?P<rruff_id>[Rr]\d{6})', array(
+        'methods'             => 'GET',
+        'callback'            => 'ormc_rest_rruff_sample',
+        // Public; the pattern limits it to one RRUFF ID lookup.
         'permission_callback' => '__return_true',
     ));
     register_rest_route('odr-rruff-mineralcalc/v1', '/elements', array(
@@ -401,7 +454,9 @@ function ormc_elements_url_attr() {
 // Where the app finds the record proxy.
 function ormc_shortcode() {
     ormc_enqueue_assets();
-    return '<div id="mineral-parser-root" data-record-url="' . esc_url(rest_url('odr-rruff-mineralcalc/v1/record/')) . '"' . ormc_elements_url_attr() . '></div>';
+    return '<div id="mineral-parser-root" data-record-url="' . esc_url(rest_url('odr-rruff-mineralcalc/v1/record/')) . '"'
+        . ' data-rruff-sample-url="' . esc_url(rest_url('odr-rruff-mineralcalc/v1/rruff-sample/')) . '"'
+        . ormc_elements_url_attr() . '></div>';
 }
 add_shortcode('odr-rruff-mineralcalc', 'ormc_shortcode');
 
