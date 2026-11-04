@@ -3,7 +3,7 @@ import { COLORS, displayFormulaStr } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { analyze, EXAMPLES } from "./MineralFormulaParser.jsx";
 import { loadCitationsForMineral } from "./cellparamsLoader.js";
-import { loadMineralForAmcsdRecord } from "./mineralDataSources.js";
+import { loadMineralForRecord } from "./mineralDataSources.js";
 import { buildIdealRows, buildEmpiricalRows, collapseMatchingRows } from "./empiricalFormulaRows.js";
 
 // The first thing visitors see: the mineral's ideal formula (picked from the
@@ -34,7 +34,8 @@ function getQueryParam(key) {
 
 export default function LandingPage({ onEdit }) {
   // Links are either ?mineral=…&formula=…&ID=… (ID is the cellparams key
-  // for the citations) or ?UUID=… alone, an AMCSD record that gives both
+  // for the citations) or ?UUID=… alone, an ODR record (AMCSD, RRUFF sample
+  // or IMA mineral, see RECORD_READERS in mineralDataSources.js) that gives both
   // formulas. The first wins when both are present.
   const [urlName, urlFormula, urlMineralId, lookupUuid] = useMemo(() => {
     const mineral = getQueryParam("mineral");
@@ -53,7 +54,7 @@ export default function LandingPage({ onEdit }) {
   useEffect(() => {
     if (!lookupUuid) return;
     const controller = new AbortController();
-    loadMineralForAmcsdRecord(lookupUuid, { signal: controller.signal })
+    loadMineralForRecord(lookupUuid, { signal: controller.signal })
       .then(setLookup)
       .catch((e) => {
         if (!controller.signal.aborted) setLookupError(e.message);
@@ -106,9 +107,9 @@ export default function LandingPage({ onEdit }) {
     };
   }, [mineralId]);
 
-  // A ?UUID= link's only citation is its AMCSD record.
+  // A ?UUID= link's citations come from its record.
   const citations = useMemo(
-    () => (lookupUuid ? (lookup?.citation ? [lookup.citation] : []) : fetched?.citations || []),
+    () => (lookupUuid ? lookup?.citations || [] : fetched?.citations || []),
     [lookupUuid, lookup, fetched]
   );
   // Waits for the ?UUID= lookup, since the ideal formula guides how
@@ -176,7 +177,7 @@ export default function LandingPage({ onEdit }) {
               fontFamily: COLORS.mono,
             }}
           >
-            Couldn't load the mineral for AMCSD record {lookupUuid}: {lookupError}
+            Couldn't load the mineral for record {lookupUuid}: {lookupError}
           </div>
         )}
 

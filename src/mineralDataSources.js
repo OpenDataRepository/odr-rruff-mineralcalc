@@ -132,6 +132,20 @@ function amcValencesOf(record) {
   }
 }
 
+// A cell from fields named a, b, c, alpha, beta, gamma. parseFloat drops a
+// trailing uncertainty, as in "12.0630(2)".
+function cellOf(record) {
+  const cellField = (name) => parseFloat(getRecordField(record, name));
+  return {
+    a: cellField("a"),
+    b: cellField("b"),
+    c: cellField("c"),
+    alpha: cellField("alpha"),
+    beta: cellField("beta"),
+    gamma: cellField("gamma"),
+  };
+}
+
 // The record as a citation column: the chemistry from its AMC file (the
 // Chemistry field only when there's no readable AMC file), cell and journal
 // line.
@@ -139,36 +153,94 @@ function amcsdCitationOf(record) {
   const amcValences = amcValencesOf(record);
   const formula = amcValences.error ? getRecordField(record, "Chemistry") : amcValences.formulaStr;
   if (!formula) return null;
-  const cellField = (name) => parseFloat(getRecordField(record, name));
   const amcLines = (getRecordField(record, "AMC File Contents") || "").split(/\r?\n/);
   return {
     formula,
-    cell: {
-      a: cellField("a"),
-      b: cellField("b"),
-      c: cellField("c"),
-      alpha: cellField("alpha"),
-      beta: cellField("beta"),
-      gamma: cellField("gamma"),
-    },
+    cell: cellOf(record),
     // AMC line 3 is the journal.
     citation: (amcLines[2] || getRecordField(record, "Authors") || "").trim(),
     amcValences: amcValences.labelled?.length ? amcValences : null,
   };
 }
 
-// A ?UUID= link: the record's IMA mineral child gives the name and ideal
-// formula; the record itself is the citation.
-export async function loadMineralForAmcsdRecord(uuid, options) {
+// ODR database UUIDs, as the API reports them in database_uuid.
+const IMA_MINERAL_DB = "8737e9e4212f5eac3703aeeb5cae";
+const AMCSD_DB = "bf04d8bf310bcf7a1126d2f042c6";
+const RRUFF_SAMPLE_DB = "ddc5e9ba834ad596cc31aebb1225";
+// Children of a RRUFF sample.
+const RRUFF_POWDER_XRD_DB = "a519503f9a1b13329323d8cdb269";
+const RRUFF_XRD_REFINEMENT_DB = "77cc5789aaef93181abcfae1c582";
+const RRUFF_MICROPROBE_DB = "b4d723b79487a7b45136b0f2a133";
+
+const childrenIn = (record, databaseUuid) =>
+  (record?.records || []).filter((child) => child.database_uuid === databaseUuid);
+
+// One column per microprobe analysis with a Measured Chemistry, labelled
+// with its RRUFF ID (e.g. R040001.2). The cell is the first refined powder
+// XRD cell, when the sample has one.
+function rruffSampleCitationsOf(record) {
+  const refinement = childrenIn(record, RRUFF_POWDER_XRD_DB)
+    .flatMap((xrd) => childrenIn(xrd, RRUFF_XRD_REFINEMENT_DB))
+    .find((r) => Number.isFinite(parseFloat(getRecordField(r, "a"))));
+  const cell = refinement ? cellOf(refinement) : null;
+  return childrenIn(record, RRUFF_MICROPROBE_DB)
+    .map((probe) => ({ probe, formula: getRecordField(probe, "Measured Chemistry") }))
+    .filter(({ formula }) => formula)
+    .map(({ probe, formula }) => ({
+      formula,
+      cell,
+      citation: getRecordField(probe, "Child RRUFF ID") || getRecordField(record, "RRUFF ID") || "",
+    }));
+}
+
+// How each database's records are read for a ?UUID= link. Records are
+// matched by database_uuid (AMCSD records have no template_uuid). Each
+// reader gives the citation columns; the name and ideal formula always come
+// from the IMA mineral, which is the record itself or a linked child.
+// Add a database here to support its records.
+const RECORD_READERS = [
+  {
+    databaseUuid: AMCSD_DB,
+    label: "AMCSD",
+    citationsOf(record) {
+      const citation = amcsdCitationOf(record);
+      if (!citation) throw new Error("The AMCSD record has no readable AMC file and no Chemistry field");
+      return [citation];
+    },
+    fallbackName: (record) => getRecordField(record, "Mineral"),
+  },
+  {
+    databaseUuid: RRUFF_SAMPLE_DB,
+    label: "RRUFF",
+    // A sample without a microprobe analysis shows the ideal formula alone.
+    citationsOf: rruffSampleCitationsOf,
+  },
+  {
+    databaseUuid: IMA_MINERAL_DB,
+    label: "IMA mineral",
+    citationsOf: () => [],
+  },
+];
+
+// A ?UUID= link to any record in RECORD_READERS. Resolves to
+// { name, formulaStr, citations, source }.
+export async function loadMineralForRecord(uuid, options) {
   const record = await loadOdrRecord(uuid, options);
-  const mineral = (record.records || []).find((child) => getRecordField(child, "Valence Formula"));
-  if (!mineral) throw new Error("The AMCSD record has no linked IMA mineral with a valence formula");
-  const citation = amcsdCitationOf(record);
-  if (!citation) throw new Error("The AMCSD record has no readable AMC file and no Chemistry field");
+  const reader = RECORD_READERS.find((r) => r.databaseUuid === record.database_uuid);
+  if (!reader) {
+    throw new Error(`The record is from database ${record.database_uuid || "(unknown)"}, which the calculator can't read yet`);
+  }
+  const mineral =
+    record.database_uuid === IMA_MINERAL_DB
+      ? record
+      : childrenIn(record, IMA_MINERAL_DB).find((child) => getRecordField(child, "Valence Formula"));
+  const formulaStr = mineral && getRecordField(mineral, "Valence Formula");
+  if (!formulaStr) throw new Error(`The ${reader.label} record has no linked IMA mineral with a valence formula`);
   return {
-    name: getRecordField(mineral, "Mineral Name") || getRecordField(record, "Mineral"),
-    formulaStr: getRecordField(mineral, "Valence Formula"),
-    citation,
+    name: getRecordField(mineral, "Mineral Name") || reader.fallbackName?.(record),
+    formulaStr,
+    citations: reader.citationsOf(record),
+    source: reader.label,
   };
 }
 
