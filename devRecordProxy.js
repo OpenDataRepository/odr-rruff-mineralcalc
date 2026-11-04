@@ -123,6 +123,38 @@ async function fetchElements(root) {
   return cachedElements;
 }
 
+// The RRUFF sample with this RRUFF ID (e.g. "R040002"), found with the API's
+// dataset search, since a microprobe record has no link to its sample.
+const RRUFF_SAMPLE_SEARCH_URL =
+  "https://www.rruff.net/odr_rruff/api/v4/dataset/ddc5e9ba834ad596cc31aebb1225/search/10/0.json";
+const RRUFF_ID_FIELD_UUID = "ee88404d73886150b59dd07cbb12";
+
+async function searchRruffSample(root, rruffId) {
+  const res = await fetch(RRUFF_SAMPLE_SEARCH_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await getToken(root)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      dataset_uuid: "ddc5e9ba834ad596cc31aebb1225",
+      fields: [{ field_uuid: RRUFF_ID_FIELD_UUID, value: rruffId }],
+    }),
+  });
+  if (res.status === 401 || res.status === 403) {
+    cachedToken = "";
+    throw httpError(`Sample search failed: ${res.status} - the API rejected the token.`, res.status);
+  }
+  if (!res.ok) throw httpError(`Sample search failed: ${res.status} ${res.statusText}`, 502);
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    throw httpError("The API returned a search result that is not valid JSON.", 502);
+  }
+  // The search can match partly, so keep only an exact RRUFF ID.
+  const sample = (json.records || []).find((r) => String(r.record_name).toUpperCase() === rruffId);
+  if (!sample) throw httpError(`No RRUFF sample ${rruffId} was found.`, 404);
+  return JSON.stringify(sample);
+}
+
 export default function devRecordProxy() {
   let root = process.cwd();
   return {
@@ -137,6 +169,18 @@ export default function devRecordProxy() {
         try {
           res.statusCode = 200;
           res.end(await fetchElements(root));
+        } catch (e) {
+          res.statusCode = e.status || 502;
+          res.end(JSON.stringify({ message: e.message }));
+        }
+      });
+      server.middlewares.use("/odr_rruff/api/rruff-sample/", async (req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        const rruffId = decodeURIComponent((req.url || "").replace(/^\/|[?#].*$/g, ""));
+        try {
+          if (!/^R\d{6}$/i.test(rruffId)) throw httpError("Not a RRUFF ID.", 400);
+          res.statusCode = 200;
+          res.end(await searchRruffSample(root, rruffId.toUpperCase()));
         } catch (e) {
           res.statusCode = e.status || 502;
           res.end(JSON.stringify({ message: e.message }));

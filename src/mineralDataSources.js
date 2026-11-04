@@ -176,36 +176,48 @@ const childrenIn = (record, databaseUuid) =>
   (record?.records || []).filter((child) => child.database_uuid === databaseUuid);
 
 // One column per microprobe analysis with a Measured Chemistry, labelled
-// with its RRUFF ID (e.g. R040001.2). The cell is the first refined powder
-// XRD cell, when the sample has one.
-function rruffSampleCitationsOf(record) {
-  const refinement = childrenIn(record, RRUFF_POWDER_XRD_DB)
+// with its RRUFF ID (e.g. R040001.2). The cell is the sample's first
+// refined powder XRD cell, when it has one. `probes` defaults to all of the
+// sample's analyses.
+function rruffSampleCitationsOf(sample, probes = childrenIn(sample, RRUFF_MICROPROBE_DB)) {
+  const refinement = childrenIn(sample, RRUFF_POWDER_XRD_DB)
     .flatMap((xrd) => childrenIn(xrd, RRUFF_XRD_REFINEMENT_DB))
     .find((r) => Number.isFinite(parseFloat(getRecordField(r, "a"))));
   const cell = refinement ? cellOf(refinement) : null;
-  return childrenIn(record, RRUFF_MICROPROBE_DB)
+  return probes
     .map((probe) => ({ probe, formula: getRecordField(probe, "Measured Chemistry") }))
     .filter(({ formula }) => formula)
     .map(({ probe, formula }) => ({
       formula,
       cell,
-      citation: getRecordField(probe, "Child RRUFF ID") || getRecordField(record, "RRUFF ID") || "",
+      citation: getRecordField(probe, "Child RRUFF ID") || getRecordField(sample, "RRUFF ID") || "",
     }));
 }
 
-// How each database's records are read for a ?UUID= link. Records are
-// matched by database_uuid (AMCSD records have no template_uuid). Each
-// reader gives the citation columns; the name and ideal formula always come
-// from the IMA mineral, which is the record itself or a linked child.
-// Add a database here to support its records.
+// The plugin's RRUFF sample lookup, or devRecordProxy.js's under
+// "npm run dev". Resolves to the sample record with that RRUFF ID.
+async function loadRruffSample(rruffId, { signal } = {}) {
+  const base = document.getElementById("mineral-parser-root")?.dataset.rruffSampleUrl || "/odr_rruff/api/rruff-sample/";
+  const res = await fetch(base + encodeURIComponent(rruffId), { signal });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.message || `RRUFF sample request failed: ${res.status} ${res.statusText}`);
+  if (!json) throw new Error("The RRUFF sample response was not valid JSON");
+  return json;
+}
+
+// How each database's records are read for a ?UUID= link, matched by
+// database_uuid (AMCSD records have no template_uuid). Each reader resolves
+// to { mineralParent, citations }: the name and ideal formula come from the
+// IMA mineral, which is mineralParent itself or one of its children. Add a
+// database here to support its records.
 const RECORD_READERS = [
   {
     databaseUuid: AMCSD_DB,
     label: "AMCSD",
-    citationsOf(record) {
+    async read(record) {
       const citation = amcsdCitationOf(record);
       if (!citation) throw new Error("The AMCSD record has no readable AMC file and no Chemistry field");
-      return [citation];
+      return { mineralParent: record, citations: [citation] };
     },
     fallbackName: (record) => getRecordField(record, "Mineral"),
   },
@@ -213,12 +225,31 @@ const RECORD_READERS = [
     databaseUuid: RRUFF_SAMPLE_DB,
     label: "RRUFF",
     // A sample without a microprobe analysis shows the ideal formula alone.
-    citationsOf: rruffSampleCitationsOf,
+    async read(record) {
+      return { mineralParent: record, citations: rruffSampleCitationsOf(record) };
+    },
+  },
+  {
+    databaseUuid: RRUFF_MICROPROBE_DB,
+    label: "RRUFF microprobe",
+    // The record doesn't link to its sample, so the sample is looked up by
+    // RRUFF ID (R040002.2 -> R040002). Only this analysis is shown.
+    async read(record, options) {
+      const childId = getRecordField(record, "Child RRUFF ID") || record.record_name || "";
+      const sampleId = /^R\d{6}/i.exec(childId)?.[0];
+      if (!sampleId) throw new Error(`The microprobe record's RRUFF ID "${childId}" doesn't name a sample`);
+      const sample = await loadRruffSample(sampleId, options);
+      const citations = rruffSampleCitationsOf(sample, [record]);
+      if (citations.length === 0) throw new Error("The microprobe record has no Measured Chemistry");
+      return { mineralParent: sample, citations };
+    },
   },
   {
     databaseUuid: IMA_MINERAL_DB,
     label: "IMA mineral",
-    citationsOf: () => [],
+    async read(record) {
+      return { mineralParent: record, citations: [] };
+    },
   },
 ];
 
@@ -230,16 +261,17 @@ export async function loadMineralForRecord(uuid, options) {
   if (!reader) {
     throw new Error(`The record is from database ${record.database_uuid || "(unknown)"}, which the calculator can't read yet`);
   }
+  const { mineralParent, citations } = await reader.read(record, options);
   const mineral =
-    record.database_uuid === IMA_MINERAL_DB
-      ? record
-      : childrenIn(record, IMA_MINERAL_DB).find((child) => getRecordField(child, "Valence Formula"));
+    mineralParent.database_uuid === IMA_MINERAL_DB
+      ? mineralParent
+      : childrenIn(mineralParent, IMA_MINERAL_DB).find((child) => getRecordField(child, "Valence Formula"));
   const formulaStr = mineral && getRecordField(mineral, "Valence Formula");
   if (!formulaStr) throw new Error(`The ${reader.label} record has no linked IMA mineral with a valence formula`);
   return {
-    name: getRecordField(mineral, "Mineral Name") || reader.fallbackName?.(record),
+    name: getRecordField(mineral, "Mineral Name") || reader.fallbackName?.(mineralParent),
     formulaStr,
-    citations: reader.citationsOf(record),
+    citations,
     source: reader.label,
   };
 }
