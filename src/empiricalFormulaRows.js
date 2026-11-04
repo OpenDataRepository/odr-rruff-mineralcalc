@@ -6,8 +6,9 @@ import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.j
 // common journal-citation shape) or a bare RRUFF sample ID. An RRUFF ID is
 // "Rxxyyyy" — the two-digit xx is the sample's 20xx submission year (e.g.
 // "R250095" was submitted in 2025), yyyy is just that year's running
-// sequence number and carries no date information of its own.
-const RRUFF_ID_PATTERN = /^R(\d{2})\d{4}$/i;
+// sequence number and carries no date information of its own. A child
+// sample (e.g. a microprobe analysis) adds a suffix, as in "R040001.2".
+const RRUFF_ID_PATTERN = /^R(\d{2})\d{4}(?:\.\d+)?$/i;
 
 // Returns null when neither shape matches, since there's nothing to safely
 // guess at.
