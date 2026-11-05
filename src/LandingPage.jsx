@@ -128,12 +128,17 @@ export default function LandingPage({ onEdit }) {
   // separate, user-controlled step.
   const rows = useMemo(() => [...idealRows, ...empiricalRows], [idealRows, empiricalRows]);
 
-  // Unchecked by default: a citation frequently just re-reports the
-  // mineral's own ideal formula (or another citation's), so hide the
+  // Unchecked by default for a mineral's citation list: a citation frequently
+  // just re-reports the mineral's own ideal formula (or another citation's),
+  // and with many columns the variations are what matter, so hide the
   // resulting duplicate-weight columns unless asked to see them all — see
   // collapseMatchingRows, which keeps whichever column comes first (the
-  // ideal one, when there's a match against it).
-  const [showMatchingWeights, setShowMatchingWeights] = useState(false);
+  // ideal one, when there's a match against it). Checked by default for a
+  // RRUFF sample/microprobe or AMCSD record link: there the user came to see
+  // that one sample's results, so its column stays even when it's identical
+  // to the ideal formula. `null` = the user hasn't touched the checkbox yet.
+  const [showMatchingOverride, setShowMatchingWeights] = useState(null);
+  const showMatchingWeights = showMatchingOverride ?? Boolean(lookupUuid && lookup?.showsMatchingColumns);
   const displayedRows = useMemo(
     () => (showMatchingWeights ? rows : collapseMatchingRows(rows)),
     [rows, showMatchingWeights]
