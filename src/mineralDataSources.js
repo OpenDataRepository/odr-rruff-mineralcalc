@@ -214,6 +214,9 @@ const RECORD_READERS = [
   {
     databaseUuid: AMCSD_DB,
     label: "AMCSD",
+    // A record link is about one sample's analysis, so its column stays even
+    // when it matches the ideal formula (see LandingPage's showMatchingWeights).
+    showsMatchingColumns: true,
     async read(record) {
       const citation = amcsdCitationOf(record);
       if (!citation) throw new Error("The AMCSD record has no readable AMC file and no Chemistry field");
@@ -224,6 +227,7 @@ const RECORD_READERS = [
   {
     databaseUuid: RRUFF_SAMPLE_DB,
     label: "RRUFF",
+    showsMatchingColumns: true,
     // A sample without a microprobe analysis shows the ideal formula alone.
     async read(record) {
       return { mineralParent: record, citations: rruffSampleCitationsOf(record) };
@@ -232,6 +236,7 @@ const RECORD_READERS = [
   {
     databaseUuid: RRUFF_MICROPROBE_DB,
     label: "RRUFF microprobe",
+    showsMatchingColumns: true,
     // The record doesn't link to its sample, so the sample is looked up by
     // RRUFF ID (R040002.2 -> R040002). Only this analysis is shown.
     async read(record, options) {
@@ -254,7 +259,7 @@ const RECORD_READERS = [
 ];
 
 // A ?UUID= link to any record in RECORD_READERS. Resolves to
-// { name, formulaStr, citations, source }.
+// { name, formulaStr, citations, source, showsMatchingColumns }.
 export async function loadMineralForRecord(uuid, options) {
   const record = await loadOdrRecord(uuid, options);
   const reader = RECORD_READERS.find((r) => r.databaseUuid === record.database_uuid);
@@ -273,6 +278,7 @@ export async function loadMineralForRecord(uuid, options) {
     formulaStr,
     citations,
     source: reader.label,
+    showsMatchingColumns: Boolean(reader.showsMatchingColumns),
   };
 }
 
