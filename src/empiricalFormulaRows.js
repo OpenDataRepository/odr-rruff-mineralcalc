@@ -213,8 +213,9 @@ function hydrogenScale(idealAtoms, empiricalAtoms) {
 // typed into the Custom Formula box. A citation whose formula fails to
 // parse is dropped rather than breaking the whole comparison table — see
 // mineralDataSources.js's row-level error handling for the same pattern at
-// batch scale. Duplicate citations (same resolved formula — see
-// dedupeCitationRows) are then collapsed down to the oldest one.
+// batch scale. Every citation that parses is returned, duplicates included —
+// LandingPage collapses duplicates (see dedupeCitationRows) only when
+// "Show formulas with matching weights" is off.
 //
 // idealRows (buildIdealRows' output) bound each element's valence to the
 // range the ideal formula gives it, so e.g. a bare "Fe" in a citation is
@@ -286,7 +287,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
       // renders.
     }
   }
-  return dedupeCitationRows(rows);
+  return rows;
 }
 
 // Collapses the full ideal+empirical row list down to one column per unique

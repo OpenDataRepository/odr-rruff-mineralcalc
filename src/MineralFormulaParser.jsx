@@ -214,6 +214,8 @@ function addCount(a, b) {
 //   dropping the ',REE' and using whichever element sat to its left for the
 //   actual weight/valence/count math. The displayed formula string is never
 //   touched by this substitution, so the UI still shows 'Y,REE' as typed.
+//   (A ',REE' after a non-REE element, e.g. '(Ca,REE)', is removed before
+//   parsing ever starts — see dropOptionalRee.)
 // ---------------------------------------------------------------------------
 function parseFormula(str) {
   let i = 0;
@@ -981,7 +983,7 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds
     const spanEnd = stripBracket ? end + 1 : end;
     result = result.slice(0, spanStart) + leftmost.raw + result.slice(spanEnd);
   }
-  if (!anyHeterovalent) return result;
+  if (!anyHeterovalent) return rebalanceCollapsed(formulaStr, groups, result, valenceBounds);
 
   // Phase 2: re-locate whatever heterovalent group(s) are left in the now
   // partially-collapsed string (their offsets shifted as phase 1 replaced
@@ -997,6 +999,115 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds
   throw new Error(
     "Our automated routine does not know how to interpret this formula because of the commas."
   );
+}
+
+// Collapsing every same-valence group to its leftmost occupant can still
+// leave the formula out of charge balance when those occupants only share a
+// valence on paper — e.g. Stefanweissite's '(Nb,Ti)(Ti,Nb)_2_', where Nb and
+// Ti can both be 4+ but are really Nb5+ and Ti4+, so Nb + Ti_2_ comes out
+// one charge short. Any occupant listed after a comma is a legitimate
+// choice, so this keeps every other group at its leftmost occupant and
+// charge-balances one group's split instead (same solve tryChargeBalanceSplit
+// does for a lone heterovalent site), trying the rightmost group first. Each
+// occupant is taken at its explicit valence, or else the valence it resolves
+// to when it fills the whole site on its own (so Nb comes out 5+ and Ti 4+
+// in Stefanweissite, while Re and Mo in Tarkianite both come out 4+ and the
+// site is left alone), and that valence is written into the split so the
+// rest of the pipeline can't re-resolve it into imbalance. Returns the plain
+// leftmost collapse if it was already balanced, if the formula has a range or
+// variable subscript, or if no group can be split to balance it.
+function rebalanceCollapsed(formulaStr, groups, collapsed, valenceBounds) {
+  const EPS = 1e-6;
+  let collapsedCharge;
+  try {
+    collapsedCharge = netChargeOfFragment(collapsed, valenceBounds);
+  } catch {
+    return collapsed;
+  }
+  if (Math.abs(collapsedCharge) < EPS) return collapsed;
+  // A range/variable formula's charge moves with its subscripts, so a single
+  // fixed split can't balance it; leave it to the range machinery.
+  if (parseFormula(collapsed).rangeSpans.length > 0) return collapsed;
+
+  // The valence an occupant would resolve to if it filled the whole site on
+  // its own (str is the formula with the site already collapsed to it).
+  const resolvedValenceIn = (str, symbol) => {
+    const atoms = resolveAmbiguousValences(
+      parseFormula(str)
+        .atoms.map(resolveAtom)
+        .filter((a) => a.symbol !== "Bx")
+        .map((a) => ({ ...a, count: repCount(a.count) })),
+      valenceBounds
+    );
+    const atom = atoms.find((a) => a.symbol === symbol);
+    return atom ? atom.valence : undefined;
+  };
+  const pinToken = (t, str, group) => {
+    if (t.isComplex || !t.valenceSet) return null;
+    let v = t.valenceSet.length === 1 ? t.valenceSet[0] : undefined;
+    if (v === undefined) {
+      const alone = str.slice(0, group.start) + t.raw + str.slice(group.end);
+      try {
+        v = resolvedValenceIn(alone, t.symbol);
+      } catch {
+        return null;
+      }
+    }
+    if (typeof v !== "number") return null;
+    const raw = `${t.symbol}^${Math.abs(v)}${v < 0 ? "-" : "+"}^`;
+    return { ...t, raw, valenceSet: [v] };
+  };
+
+  const byPosition = [...groups].sort((a, b) => a.start - b.start);
+  for (let k = byPosition.length - 1; k >= 0; k--) {
+    const target = byPosition[k];
+    if (!isSimpleCommaGroup(formulaStr, target)) continue;
+    // Collapse every other group to its leftmost occupant (right to left, so
+    // earlier offsets stay valid), shifting the target's offsets past any
+    // group collapsed before it.
+    let str = formulaStr;
+    let shift = 0;
+    for (const g of [...byPosition].reverse()) {
+      if (g === target) continue;
+      const leftmost = parseCommaTokens(str.slice(g.start, g.end))[0];
+      const openIdx = g.start - 1;
+      const hasBracket = openIdx >= 0 && "([{".includes(str[openIdx]);
+      const stripBracket = hasBracket && !leftmost.isComplex;
+      const spanStart = stripBracket ? openIdx : g.start;
+      const spanEnd = stripBracket ? g.end + 1 : g.end;
+      str = str.slice(0, spanStart) + leftmost.raw + str.slice(spanEnd);
+      if (g.start < target.start) shift += leftmost.raw.length - (spanEnd - spanStart);
+    }
+    const shifted = { ...target, start: target.start + shift, end: target.end + shift };
+    const pinned = parseCommaTokens(str.slice(shifted.start, shifted.end)).map((t) => pinToken(t, str, shifted));
+    if (pinned.some((t) => !t)) continue;
+    const balanced = tryChargeBalanceSplit(str, shifted, pinned, valenceBounds);
+    if (balanced === null) continue;
+    try {
+      if (Math.abs(netChargeOfFragment(balanced.formulaStr, valenceBounds)) < EPS) return balanced.formulaStr;
+    } catch {
+      // fall through to the next group
+    }
+  }
+  return collapsed;
+}
+
+// The REE half of '(X,REE)' is optional, so when X isn't itself a rare earth
+// (e.g. Stefanweissite's '(Ca,REE)_2_') the site is just taken as X: the
+// ',REE' is dropped, along with the bracket if X is then all that's left in
+// it ('(Ca,REE)_2_' -> 'Ca_2_'). A ',REE' after an actual rare earth (e.g.
+// '(Y,REE)') is left alone for parseFormula, where that element stands in
+// for the whole site. Returns { formulaStr, changed }.
+function dropOptionalRee(formulaStr) {
+  const re = /([A-Z][a-z]*)(\^\d+[+-]\^)?,REE(?![a-z])/g;
+  let changed = false;
+  let out = formulaStr.replace(re, (match, symbol, valence = "") => {
+    if (REE_ELEMENTS.has(symbol)) return match;
+    changed = true;
+    return symbol + valence;
+  });
+  if (changed) out = out.replace(/\(([A-Z][a-z]*(?:\^\d+[+-]\^)?)\)/g, "$1");
+  return { formulaStr: out, changed };
 }
 
 // Rewrites a formula's comma-separated site-sharing group(s) — see
@@ -1090,6 +1201,100 @@ function analyzeOne(formulaStr, valenceBounds) {
   };
 }
 
+// The formula with every count multiplied by `factor` — e.g. 2 turns
+// 'Ca_9.5_(SiO_4_)_5_O' into 'Ca_19_(SiO_4_)_10_O_2_'. Only the top-level
+// counts change (an atom's own, or a bracket group's trailing one), since a
+// group's inside is already multiplied by its trailing count. A bare leading
+// number (the '11' in '·11H_2_O') multiplies everything after it in the
+// parser, so it's scaled instead and the rest is left as is. Weight percents
+// come out the same; only the formula is written at a different scale.
+// Throws for what can't be scaled by rewriting counts: a variable subscript
+// ('_x_', '_40-2x_') or a comma outside any bracket.
+export function scaleFormulaStr(str, factor) {
+  if (!(factor > 0)) throw new Error("The scale has to be a number above 0.");
+  const [variable] = findAlgebraicSubscripts(str);
+  if (variable) throw new Error(`Can't scale a formula with the variable subscript '_${variable.raw}_'.`);
+  const num = (n) => String(Math.round(n * factor * 1e6) / 1e6);
+  const scaledCount = (raw) => {
+    // A count the parser can't read as a number, like the site total
+    // '_Σ6_', counts as 1 there, so it does here too.
+    if (raw === null || (!raw.includes("-") && isNaN(parseNum(raw)))) return factor === 1 ? (raw === null ? "" : `_${raw}_`) : `_${num(1)}_`;
+    const out = raw.includes("-") ? raw.split("-").map((p) => num(parseNum(p))).join("-") : num(parseNum(raw));
+    return out === "1" ? "" : `_${out}_`;
+  };
+  // A valence and count right after position j: returns [text, end].
+  const tail = (j) => {
+    let valence = "";
+    if (str[j] === "^") {
+      const end = str.indexOf("^", j + 1);
+      if (end === -1) return [str.slice(j), str.length];
+      valence = str.slice(j, end + 1);
+      j = end + 1;
+    }
+    let raw = null;
+    if (str[j] === "_") {
+      const end = str.indexOf("_", j + 1);
+      if (end !== -1) {
+        raw = str.slice(j + 1, end);
+        j = end + 1;
+      }
+    }
+    return [valence + scaledCount(raw), j];
+  };
+  let out = "";
+  let depth = 0;
+  let i = 0;
+  while (i < str.length) {
+    const c = str[i];
+    if (depth === 0 && /[0-9]/.test(c)) {
+      const m = str.slice(i).match(/^(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?/);
+      out += m[2] ? `${num(parseFloat(m[1]))}-${num(parseFloat(m[2]))}` : num(parseFloat(m[1]));
+      return out + str.slice(i + m[0].length);
+    }
+    if ("([{".includes(c)) {
+      depth++;
+      out += c;
+      i++;
+      continue;
+    }
+    if (")]}".includes(c)) {
+      depth--;
+      out += c;
+      i++;
+      if (depth === 0) {
+        const [text, end] = tail(i);
+        out += text;
+        i = end;
+      }
+      continue;
+    }
+    if (depth > 0) {
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === ",") throw new Error("Can't scale a formula with a comma outside brackets.");
+    const symbol =
+      str.slice(i, i + 3).toLowerCase() === "box" ? str.slice(i, i + 3)
+      : str.slice(i, i + 3) === "REE" && !/[a-z]/.test(str[i + 3] || "") ? "REE"
+      : /[A-Z]/.test(c) ? str.slice(i).match(/^[A-Z][a-z]*/)[0]
+      : null;
+    if (!symbol) {
+      // '·' adds a hydrate with no number: it needs the factor written in.
+      if ((c === "·" || c === ".") && factor !== 1 && /[A-Z([{]/.test(str[i + 1] || "")) {
+        return out + c + num(1) + str.slice(i + 1);
+      }
+      out += c;
+      i++;
+      continue;
+    }
+    const [text, end] = tail(i + symbol.length);
+    out += symbol + text;
+    i = end;
+  }
+  return out;
+}
+
 // valenceBounds (optional, see valenceBoundsOf) limits which valence an
 // element without an explicit '^n+^' can be resolved to.
 export function analyze(rawInput, { valenceBounds } = {}) {
@@ -1112,9 +1317,15 @@ export function analyze(rawInput, { valenceBounds } = {}) {
   // for the ',REE' case) if there's no plain comma to expand. More than one
   // comma group instead collapses to a single leftmost-element-per-group
   // "modified ideal formula" — isModifiedIdeal flags that for the UI.
-  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(formulaStr, valenceBounds);
+  const { formulaStr: reeDroppedStr, changed: droppedRee } = dropOptionalRee(formulaStr);
+  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(reeDroppedStr, valenceBounds);
 
-  return { name, isModifiedIdeal, originalFormulaStr, ...analyzeOne(expandedFormulaStr, valenceBounds) };
+  return {
+    name,
+    isModifiedIdeal: isModifiedIdeal || droppedRee,
+    originalFormulaStr,
+    ...analyzeOne(expandedFormulaStr, valenceBounds),
+  };
 }
 
 // Picks out a single end-member column from a ranged analyze() result and
@@ -1298,6 +1509,33 @@ export default function MineralFormulaParser({ initialName, initialFormula, init
     setFormulaInput(parseChemicalFormula(formulaInput));
     setPlainFormulaNotice(null);
   }, [formulaInput]);
+
+  // Rewrites the formula at another scale (see scaleFormulaStr), e.g. ×2 to
+  // match a paper that uses twice the formula unit. "1/2" or 0.5 halves it.
+  const [scaleInput, setScaleInput] = useState("2");
+  // { original, scaled }: the formula before the first scale, and the latest
+  // scaled one. Reset is offered only while the box still holds `scaled` —
+  // once the formula is edited by hand (or another mineral is picked), it
+  // would throw those edits away.
+  const [scaleOrigin, setScaleOrigin] = useState(null);
+  const canResetScale = scaleOrigin !== null && formulaInput === scaleOrigin.scaled;
+  const applyScale = useCallback(() => {
+    const factor = parseNum(scaleInput.trim());
+    try {
+      const scaled = scaleFormulaStr(formulaInput, factor);
+      setScaleOrigin({ original: canResetScale ? scaleOrigin.original : formulaInput, scaled });
+      setFormulaInput(scaled);
+      setPlainFormulaNotice(null);
+    } catch (e) {
+      setPlainFormulaNotice(e.message);
+    }
+  }, [formulaInput, scaleInput, canResetScale, scaleOrigin]);
+  const resetScale = useCallback(() => {
+    if (!canResetScale) return;
+    setFormulaInput(scaleOrigin.original);
+    setScaleOrigin(null);
+    setPlainFormulaNotice(null);
+  }, [canResetScale, scaleOrigin]);
 
 
   const topSummaryRows = useMemo(() => {
@@ -1520,14 +1758,48 @@ export default function MineralFormulaParser({ initialName, initialFormula, init
             <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
               Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
             </label>
-            <button
-              type="button"
-              onClick={convertPlainFormula}
-              title="Converts a plain formula (e.g. Ni2+C31H32N4) into this app's _subscript_ / ^superscript^ syntax"
-              style={{ ...backButtonStyle, flexShrink: 0, padding: "4px 10px", fontSize: 11.5 }}
-            >
-              Convert plain formula
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              <span
+                style={{ display: "flex", alignItems: "center", gap: 4, color: COLORS.textDim, fontSize: 11.5 }}
+                title="Multiplies every subscript in the formula by this number (e.g. 2, 0.5 or 1/2). Weight percents don't change."
+              >
+                Scale ×
+                <input
+                  value={scaleInput}
+                  onChange={(e) => setScaleInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") applyScale();
+                  }}
+                  aria-label="Formula scale factor"
+                  style={{ width: 44, fontSize: 11.5, padding: "3px 5px", fontFamily: COLORS.mono }}
+                />
+              </span>
+              <button
+                type="button"
+                onClick={applyScale}
+                style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
+              >
+                Scale formula
+              </button>
+              {canResetScale && (
+                <button
+                  type="button"
+                  onClick={resetScale}
+                  title="Puts the formula back the way it was before scaling"
+                  style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
+                >
+                  Reset
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={convertPlainFormula}
+                title="Converts a plain formula (e.g. Ni2+C31H32N4) into this app's _subscript_ / ^superscript^ syntax"
+                style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
+              >
+                Convert plain formula
+              </button>
+            </div>
           </div>
           {plainFormulaNotice && (
             <div style={{ color: COLORS.warn, fontSize: 11.5 }}>{plainFormulaNotice}</div>

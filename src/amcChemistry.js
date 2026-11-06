@@ -70,18 +70,46 @@ function formulaUnitScale(ours, chemistry) {
 // Within rounding: 0.01 plus 0.5% of the amount.
 const totalsAgree = (scaledOurs, chemistry) => Math.abs(scaledOurs - chemistry) <= 0.01 + 0.005 * Math.abs(chemistry);
 
+const divisorsOf = (n) => [...Array(n).keys()].map((i) => i + 1).filter((d) => n % d === 0);
+
+// How many formula units the unit cell is divided into. With the IMA ideal
+// formula's atom count to go by, it's the divisor of the space group's
+// symmetry count whose formula comes closest to that many atoms (H left out
+// of both, since AMC files often have no H), so the formula reads at the same
+// scale as the ideal one — e.g. modraite's Ca19... rather than half of it.
+// Ties go to the site-multiplicity gcd, then the smaller divisor. Without an
+// ideal count it's the gcd of the site multiplicities, as before.
+function amcFormulaScale({ siteGcd, symmetryCount, cellAtomCount, idealAtomCount }) {
+  if (!(idealAtomCount > 0) || !(cellAtomCount > 0) || !(symmetryCount > 0)) {
+    return { divisor: siteGcd, fromIdeal: false };
+  }
+  const misfit = (d) => Math.abs(Math.log(cellAtomCount / d / idealAtomCount));
+  const best = divisorsOf(symmetryCount).reduce((b, d) => {
+    const diff = misfit(d) - misfit(b);
+    if (diff < -1e-9) return d;
+    if (Math.abs(diff) <= 1e-9 && d === siteGcd) return d;
+    return b;
+  }, 1);
+  return { divisor: best, fromIdeal: true };
+}
+
 const formulaTerm = (element, valence, amount) =>
   `${element}${valence ? `^${valence}+^` : ""}${amount === 1 ? "" : `_${amount}_`}`;
 
 // The Chemistry field's amounts, with each labelled element split by valence
 // in the proportions the atom table gives (Fe6.1 -> Fe2+ and Fe3+). Only
 // labelled elements are checked against the field.
+// idealAtomCount (optional) is the IMA ideal formula's atom count without H,
+// used to pick the formula-unit scale (see amcFormulaScale). divisor
+// (optional) skips that and divides the unit cell by exactly this much — the
+// page's manual scale picker.
 // Returns { formulaStr, labelled, rejected, partial (elements only partly
-// labelled), mismatches, scale, usable, datasetCount, Z }.
+// labelled), mismatches, scale, usable, datasetCount, Z, symmetryCount,
+// divisors (every divisor of symmetryCount, for the picker), scaledToIdeal }.
 // Throws when the AMC text can't be expanded.
-export function amcValenceChemistry(amcText, chemistryStr) {
+export function amcValenceChemistry(amcText, chemistryStr, { idealAtomCount, divisor } = {}) {
   const datasets = unitCellFromAmc(amcText);
-  const { atoms } = datasets[0];
+  const { atoms, symmetryCount } = datasets[0];
   const amounts = new Map(); // "Fe" / "Fe3+" -> { element, valence, count }
   const orders = new Map();
   const labelled = new Map();
@@ -109,7 +137,12 @@ export function amcValenceChemistry(amcText, chemistryStr) {
       amounts.set(key, entry);
     }
   }
-  const Z = [...orders.values()].reduce(gcd, 0) || 1;
+  const siteGcd = [...orders.values()].reduce(gcd, 0) || 1;
+  const cellAtomCount = [...amounts.values()].filter((e) => e.element !== "H").reduce((s, e) => s + e.count, 0);
+  const { divisor: Z, fromIdeal: scaledToIdeal } =
+    divisor > 0
+      ? { divisor, fromIdeal: false }
+      : amcFormulaScale({ siteGcd, symmetryCount, cellAtomCount, idealAtomCount });
 
   // Each element's parts (bare before 2+ before 3+), and its total.
   const parts = new Map();
@@ -155,5 +188,8 @@ export function amcValenceChemistry(amcText, chemistryStr) {
     usable: labelled.size > 0 && mismatches.length === 0,
     datasetCount: datasets.length,
     Z,
+    symmetryCount,
+    divisors: symmetryCount > 0 ? divisorsOf(symmetryCount) : [Z],
+    scaledToIdeal,
   };
 }

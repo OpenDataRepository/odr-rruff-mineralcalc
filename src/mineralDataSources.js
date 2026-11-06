@@ -1,5 +1,8 @@
 import * as XLSX from "xlsx";
 import { amcValenceChemistry } from "./amcChemistry.js";
+// A circular import (the parser imports this file), safe because analyze is
+// only called inside functions, never while the modules load.
+import { analyze } from "./MineralFormulaParser.jsx";
 
 // ---------------------------------------------------------------------------
 // Data-source layer: anything that can produce a list of
@@ -122,13 +125,29 @@ export function getRecordField(record, fieldName) {
 // record's Chemistry field isn't passed in: it's filled from the original
 // CIF, which isn't a reliable source for chemistry, while the AMC file is
 // the one edited until the chemistry is right.
-function amcValencesOf(record) {
+// idealFormulaStr (the IMA valence formula) sets the formula's scale, see
+// amcChemistry's amcFormulaScale.
+// divisor (optional) overrides that scale, see amcValenceChemistry.
+function amcValencesOf(record, idealFormulaStr, divisor) {
   const amcText = getRecordField(record, "AMC File Contents");
   if (!amcText) return { error: "The record has no AMC File Contents" };
   try {
-    return amcValenceChemistry(amcText);
+    return amcValenceChemistry(amcText, undefined, { idealAtomCount: atomCountWithoutH(idealFormulaStr), divisor });
   } catch (e) {
     return { error: e.message };
+  }
+}
+
+// A formula's atom count, H left out, or undefined when it doesn't parse.
+// A range formula's first end-member is used.
+export function atomCountWithoutH(formulaStr) {
+  if (!formulaStr) return undefined;
+  try {
+    const result = analyze(formulaStr);
+    const atoms = result?.isRange ? result.columns[0].atoms : result?.atoms;
+    return atoms?.filter((a) => a.symbol !== "H").reduce((s, a) => s + a.count, 0);
+  } catch {
+    return undefined;
   }
 }
 
@@ -149,8 +168,10 @@ function cellOf(record) {
 // The record as a citation column: the chemistry from its AMC file (the
 // Chemistry field only when there's no readable AMC file), cell and journal
 // line.
-function amcsdCitationOf(record) {
-  const amcValences = amcValencesOf(record);
+// divisor (optional) is the page's manual scale; the citation's amcScale
+// rebuilds it at any other divisor of the symmetry count (see LandingPage).
+function amcsdCitationOf(record, idealFormulaStr, divisor) {
+  const amcValences = amcValencesOf(record, idealFormulaStr, divisor);
   const formula = amcValences.error ? getRecordField(record, "Chemistry") : amcValences.formulaStr;
   if (!formula) return null;
   const amcLines = (getRecordField(record, "AMC File Contents") || "").split(/\r?\n/);
@@ -160,6 +181,16 @@ function amcsdCitationOf(record) {
     // AMC line 3 is the journal.
     citation: (amcLines[2] || getRecordField(record, "Authors") || "").trim(),
     amcValences: amcValences.labelled?.length ? amcValences : null,
+    // Only when the formula came from the AMC file (not the Chemistry field).
+    amcScale: amcValences.error
+      ? null
+      : {
+          divisor: amcValences.Z,
+          divisors: amcValences.divisors,
+          symmetryCount: amcValences.symmetryCount,
+          scaledToIdeal: amcValences.scaledToIdeal,
+          withDivisor: (d) => amcsdCitationOf(record, idealFormulaStr, d),
+        },
   };
 }
 
@@ -218,7 +249,7 @@ const RECORD_READERS = [
     // when it matches the ideal formula (see LandingPage's showMatchingWeights).
     showsMatchingColumns: true,
     async read(record) {
-      const citation = amcsdCitationOf(record);
+      const citation = amcsdCitationOf(record, idealFormulaOf(record));
       if (!citation) throw new Error("The AMCSD record has no readable AMC file and no Chemistry field");
       return { mineralParent: record, citations: [citation] };
     },
@@ -258,6 +289,19 @@ const RECORD_READERS = [
   },
 ];
 
+// The IMA mineral a record belongs to: the record itself, or its child with
+// a valence formula.
+function imaMineralOf(record) {
+  return record.database_uuid === IMA_MINERAL_DB
+    ? record
+    : childrenIn(record, IMA_MINERAL_DB).find((child) => getRecordField(child, "Valence Formula"));
+}
+
+const idealFormulaOf = (record) => {
+  const mineral = imaMineralOf(record);
+  return mineral && getRecordField(mineral, "Valence Formula");
+};
+
 // A ?UUID= link to any record in RECORD_READERS. Resolves to
 // { name, formulaStr, citations, source, showsMatchingColumns }.
 export async function loadMineralForRecord(uuid, options) {
@@ -267,10 +311,7 @@ export async function loadMineralForRecord(uuid, options) {
     throw new Error(`The record is from database ${record.database_uuid || "(unknown)"}, which the calculator can't read yet`);
   }
   const { mineralParent, citations } = await reader.read(record, options);
-  const mineral =
-    mineralParent.database_uuid === IMA_MINERAL_DB
-      ? mineralParent
-      : childrenIn(mineralParent, IMA_MINERAL_DB).find((child) => getRecordField(child, "Valence Formula"));
+  const mineral = imaMineralOf(mineralParent);
   const formulaStr = mineral && getRecordField(mineral, "Valence Formula");
   if (!formulaStr) throw new Error(`The ${reader.label} record has no linked IMA mineral with a valence formula`);
   return {

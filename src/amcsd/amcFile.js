@@ -124,7 +124,9 @@ function unitCellOfDataset(dataset) {
     occ: occIdx !== -1 && row.values[occIdx] ? amcNumber(row.values[occIdx]) : 1,
   }));
   const ops = amcSymmetryMatrices(dataset.cell, dataset.originShift);
-  return { cell, atoms: UnitCell.expandAtoms(cell, ops, atoms) };
+  // symmetryCount (centering included) bounds the formula-unit scale: it's
+  // almost always one of its divisors (see amcChemistry's amcFormulaScale).
+  return { cell, atoms: UnitCell.expandAtoms(cell, ops, atoms), symmetryCount: ops.length };
 }
 
 const AMC_CELL_LINE_RE = /^(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(\S+)$/;
