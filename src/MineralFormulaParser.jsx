@@ -1280,9 +1280,32 @@ export function scaleFormulaStr(str, factor) {
       return out + str.slice(i + m[0].length);
     }
     if ("([{".includes(c)) {
+      // A top-level bracket with no count or valence of its own and no
+      // brackets or commas inside, like the site '(Ce_2.72_Ca_0.68_)', gets
+      // the numbers inside it scaled ('(Ce_0.68_Ca_0.17_)') instead of a
+      // new trailing count ('(Ce_2.72_Ca_0.68_)_0.25_').
+      if (depth === 0) {
+        const close = str.indexOf({ "(": ")", "[": "]", "{": "}" }[c], i + 1);
+        const inner = close === -1 ? "" : str.slice(i + 1, close);
+        const after = str[close + 1];
+        if (inner && !/[([{)\]},]/.test(inner) && after !== "_" && after !== "^") {
+          out += c + scaleFormulaStr(inner, factor) + str[close];
+          i = close + 1;
+          continue;
+        }
+      }
       depth++;
       out += c;
       i++;
+      continue;
+    }
+    // A valence out of place (after a count, as in 'Fe_5_^2+^') is copied as
+    // is, so its digit isn't read as a leading multiplier.
+    if (c === "^") {
+      const end = str.indexOf("^", i + 1);
+      const stop = end === -1 ? str.length : end + 1;
+      out += str.slice(i, stop);
+      i = stop;
       continue;
     }
     if (")]}".includes(c)) {

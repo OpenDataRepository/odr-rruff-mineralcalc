@@ -1,4 +1,4 @@
-import { analyze, valenceBoundsOf } from "./MineralFormulaParser.jsx";
+import { analyze, valenceBoundsOf, scaleFormulaStr } from "./MineralFormulaParser.jsx";
 import { ELEMENTS, REE_ELEMENTS } from "./elements.js";
 import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
 
@@ -208,6 +208,31 @@ function hydrogenScale(idealAtoms, empiricalAtoms) {
   return { element, idealCount: ideal[element], empiricalCount: empirical[element] };
 }
 
+// An analyze() result's atom count without H (the first end-member's, for
+// a range), or 0.
+function atomCountWithoutH(result) {
+  const atoms = result?.isRange ? result.columns[0].atoms : result?.atoms;
+  return (atoms || []).filter((a) => a.symbol !== "H").reduce((s, a) => s + a.count, 0);
+}
+
+// How much to scale a citation's formula so it's written at the same size as
+// the ideal formula — e.g. 1/2 for Zirconolite's 'Ca2 Zr2 Ti4 O14' against
+// CaZrTi_2_O_7_. Only a whole-number multiple or fraction from x2 to x12
+// (or /2 to /12) within 20% of the atom-count ratio (H left out, since
+// citations often skip it) counts; anything else returns 1 and the formula
+// stays as cited.
+const CITATION_SCALE_TOLERANCE = 0.2;
+const CITATION_SCALE_MAX = 12;
+export function citationScaleFactor(citationAtoms, idealAtoms) {
+  if (!(citationAtoms > 0) || !(idealAtoms > 0)) return 1;
+  const ratio = citationAtoms / idealAtoms;
+  const bigger = ratio >= 1;
+  const r = bigger ? ratio : 1 / ratio;
+  const n = Math.round(r);
+  if (n < 2 || n > CITATION_SCALE_MAX || Math.abs(r / n - 1) > CITATION_SCALE_TOLERANCE) return 1;
+  return bigger ? 1 / n : n;
+}
+
 // One row per citation's raw formula, converted (if it isn't already in
 // this app's ^valence^/_count_ syntax) and analyzed exactly like a formula
 // typed into the Custom Formula box. A citation whose formula fails to
@@ -237,6 +262,34 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
     let { formulaStr } = reeResult;
     try {
       let result = analyze(`${name}\t${formulaStr}`, { valenceBounds });
+      // A citation written at a multiple of the ideal formula's size (O14
+      // against O7) is rewritten at the ideal's size; weight percents don't
+      // change. Left as cited when it can't be scaled (see scaleFormulaStr)
+      // or the scaled formula doesn't parse. A citation missing an element
+      // the ideal formula has (other than H), like a Fayalite analysis with
+      // no O, would have its atom count thrown off, so it's left alone.
+      let scaledBy = null;
+      const missingNonH = missingElements(requiredElements, formulaStr).some((el) => el !== "H");
+      // A comma site ('(Mn,Fe,Sr)') can be filled differently once the scale
+      // changes, which would change the weights, so it keeps its own scale.
+      const hasSharedSite = /,(?!REE)/.test(formulaStr);
+      const factor =
+        result && !missingNonH && !hasSharedSite
+          ? citationScaleFactor(atomCountWithoutH(result), atomCountWithoutH(idealRows[0]?.result))
+          : 1;
+      if (factor !== 1) {
+        try {
+          const scaledStr = scaleFormulaStr(formulaStr, factor);
+          const scaledResult = analyze(`${name}\t${scaledStr}`, { valenceBounds });
+          if (scaledResult) {
+            scaledBy = { factor, citedFormulaStr: formulaStr };
+            formulaStr = scaledStr;
+            result = scaledResult;
+          }
+        } catch {
+          // keep the citation's own scale
+        }
+      }
       // A citation that leaves hydrogen out entirely (usually because the
       // analysis didn't measure water/OH) gets the ideal formula's H count,
       // scaled to the citation's own formula unit (see hydrogenScale),
@@ -267,6 +320,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
         year,
         displayYear: displayYear(citation, year),
         reeSubstitution,
+        scaledBy,
         hydrogenAdded,
         missingElements: missingElements(requiredElements, formulaStr),
         // Only set on a ?UUID= link's AMCSD citation.
