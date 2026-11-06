@@ -4,7 +4,7 @@ import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { analyze, EXAMPLES } from "./MineralFormulaParser.jsx";
 import { loadCitationsForMineral } from "./cellparamsLoader.js";
 import { loadMineralForRecord } from "./mineralDataSources.js";
-import { buildIdealRows, buildEmpiricalRows, collapseMatchingRows } from "./empiricalFormulaRows.js";
+import { buildIdealRows, buildEmpiricalRows, collapseMatchingRows, dedupeCitationRows } from "./empiricalFormulaRows.js";
 
 // The first thing visitors see: the mineral's ideal formula (picked from the
 // URL's "mineral"/"formula" params if present, otherwise EXAMPLES[0]) side
@@ -107,11 +107,21 @@ export default function LandingPage({ onEdit }) {
     };
   }, [mineralId]);
 
+  // The manual formula scale for an AMCSD record's formula: the unit cell is
+  // divided by this instead of the automatic choice (see amcFormulaScale in
+  // amcChemistry.js). `null` = automatic. Only the formula changes, never the
+  // weight percents.
+  const [amcDivisor, setAmcDivisor] = useState(null);
+  // The AMC scale info of the first citation that has one, for the picker.
+  const amcScale = lookupUuid ? lookup?.citations?.find((c) => c.amcScale)?.amcScale : null;
+
   // A ?UUID= link's citations come from its record.
-  const citations = useMemo(
-    () => (lookupUuid ? lookup?.citations || [] : fetched?.citations || []),
-    [lookupUuid, lookup, fetched]
-  );
+  const citations = useMemo(() => {
+    if (!lookupUuid) return fetched?.citations || [];
+    const list = lookup?.citations || [];
+    if (!amcDivisor) return list;
+    return list.map((c) => (c.amcScale ? c.amcScale.withDivisor(amcDivisor) || c : c));
+  }, [lookupUuid, lookup, fetched, amcDivisor]);
   // Waits for the ?UUID= lookup, since the ideal formula guides how
   // citations are read.
   const empiricalRows = useMemo(
@@ -139,9 +149,16 @@ export default function LandingPage({ onEdit }) {
   // to the ideal formula. `null` = the user hasn't touched the checkbox yet.
   const [showMatchingOverride, setShowMatchingWeights] = useState(null);
   const showMatchingWeights = showMatchingOverride ?? Boolean(lookupUuid && lookup?.showsMatchingColumns);
+  // Checked shows every citation, even ones whose weights match each other.
+  // Unchecked first collapses duplicate citations to the oldest one (see
+  // dedupeCitationRows, which prefers a citation with AMC label valences),
+  // then drops any column that matches an earlier one.
   const displayedRows = useMemo(
-    () => (showMatchingWeights ? rows : collapseMatchingRows(rows)),
-    [rows, showMatchingWeights]
+    () =>
+      showMatchingWeights
+        ? rows
+        : collapseMatchingRows([...idealRows, ...dedupeCitationRows(empiricalRows)]),
+    [rows, idealRows, empiricalRows, showMatchingWeights]
   );
 
   const [openColumnIndex, setOpenColumnIndex] = useState(null);
@@ -218,16 +235,50 @@ export default function LandingPage({ onEdit }) {
           />
         ) : rows.length > 0 ? (
           <>
+            {(rows.length > 1 || amcScale) && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: "6px 18px",
+                marginBottom: 10,
+                fontSize: 12.5,
+                color: COLORS.textDim,
+              }}
+            >
+            {amcScale && (
+              <label
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+                title={`The AMC formula is the unit cell's contents divided by this. ${amcScale.symmetryCount} symmetry operations, so the choices are its divisors. Auto picks the one closest to the ideal formula's atom count. Weight percents don't change.`}
+              >
+                AMC formula: unit cell ÷
+                <select
+                  value={amcDivisor ?? ""}
+                  onChange={(e) => {
+                    setAmcDivisor(e.target.value ? Number(e.target.value) : null);
+                    setOpenColumnIndex(null);
+                  }}
+                  style={{ fontSize: 12.5 }}
+                >
+                  <option value="">
+                    Auto ({amcScale.divisor})
+                  </option>
+                  {amcScale.divisors.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {rows.length > 1 && (
               <label
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "flex-end",
                   gap: 6,
-                  marginBottom: 10,
-                  fontSize: 12.5,
-                  color: COLORS.textDim,
                   cursor: "pointer",
                 }}
               >
@@ -241,6 +292,8 @@ export default function LandingPage({ onEdit }) {
                 />
                 Show formulas with matching weights
               </label>
+            )}
+            </div>
             )}
             <SummaryView
               title={name ?? fetched?.mineralName}

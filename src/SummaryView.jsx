@@ -440,6 +440,17 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                 , {r.reeSubstitution.from} → {r.reeSubstitution.to}
               </span>
             )}
+            {/* A citation rewritten at the ideal formula's size — see
+                citationScaleFactor in empiricalFormulaRows.js. The hover
+                text shows the formula as cited. */}
+            {r.scaledBy && (
+              <span
+                style={{ color: COLORS.warn, fontWeight: 600 }}
+                title={`Cited as ${r.scaledBy.citedFormulaStr.replace(/[_^]/g, "")}. Rewritten at the ideal formula's size; weight percents don't change.`}
+              >
+                , formula {r.scaledBy.factor < 1 ? `÷${Math.round(1 / r.scaledBy.factor)}` : `×${r.scaledBy.factor}`} to match ideal
+              </span>
+            )}
             {/* Hydrogen the citation left out, filled in from the ideal
                 formula's H count scaled on a shared element — see
                 hydrogenScale in empiricalFormulaRows.js. The hover text
