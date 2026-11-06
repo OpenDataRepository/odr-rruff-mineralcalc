@@ -953,6 +953,17 @@ function commaGroupHasCommonValence(parsedTokens) {
 // two or more at once leaves the balance equation underdetermined, and the
 // whole formula is rejected rather than guessed at.
 function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds) {
+  // Phase 0: every site at its first (dominant) occupant. Whatever comes
+  // after a comma is optional, so when that alone is charge-balanced it's
+  // the answer — e.g. Zirconolite's '(Ca,Y)Zr(Ti,Mg,Al)_2_O_7_' is just
+  // CaZrTi_2_O_7_, even though both sites mix valences.
+  const allLeftmost = collapseEveryGroupToLeftmost(formulaStr, groups);
+  try {
+    if (Math.abs(netChargeOfFragment(allLeftmost, valenceBounds)) < 1e-6) return allLeftmost;
+  } catch {
+    // not parseable on its own; carry on with the per-group handling below
+  }
+
   // Phase 1: collapse every same-valence group straight to its leftmost
   // occupant. Right-to-left so each earlier group's start/end offsets stay
   // valid as later (rightward) groups get replaced first; a heterovalent
@@ -999,6 +1010,23 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds
   throw new Error(
     "Our automated routine does not know how to interpret this formula because of the commas."
   );
+}
+
+// Every comma group replaced by its first occupant, same-valence or not.
+// A bare element drops its bracket ('(Fe,Mg)_2_' -> 'Fe_2_'); a multi-atom
+// one keeps it so a trailing count still applies to the whole fragment.
+function collapseEveryGroupToLeftmost(formulaStr, groups) {
+  let result = formulaStr;
+  for (const { start, end } of [...groups].sort((a, b) => b.start - a.start)) {
+    const leftmost = parseCommaTokens(result.slice(start, end))[0];
+    const openIdx = start - 1;
+    const hasBracket = openIdx >= 0 && "([{".includes(result[openIdx]);
+    const stripBracket = hasBracket && !leftmost.isComplex;
+    const spanStart = stripBracket ? openIdx : start;
+    const spanEnd = stripBracket ? end + 1 : end;
+    result = result.slice(0, spanStart) + leftmost.raw + result.slice(spanEnd);
+  }
+  return result;
 }
 
 // Collapsing every same-valence group to its leftmost occupant can still
