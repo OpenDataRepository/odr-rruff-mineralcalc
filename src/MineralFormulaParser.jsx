@@ -644,7 +644,12 @@ function mergeAtoms(atoms) {
 // and show only atomic weight percents. A formula containing even one
 // unrecognized element is treated conservatively (not metallic), since
 // there's no data to rule out a negative valence for it.
+// A formula of one element alone (native S, Se, Te, C…) counts too, even
+// when that element can be negative: a native element is uncharged (0),
+// which none of its listed valences would give.
 function isMetallicFormula(atoms) {
+  const symbols = new Set(atoms.map((a) => a.symbol));
+  if (symbols.size === 1 && ELEMENTS[atoms[0].symbol]) return true;
   return atoms.every((a) => {
     const data = ELEMENTS[a.symbol];
     if (!data) return false;
