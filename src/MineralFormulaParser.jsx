@@ -464,8 +464,10 @@ function parseFormula(str) {
   }
 
   const atoms = parseTerms();
-  if (i < n && str[i] === ")") {
-    throw new Error(`Unmatched ')' at position ${i}`);
+  // parseTerms stops at any closer, so one left over here was never opened —
+  // without this a stray ']' or '}' would quietly cut the formula short.
+  if (i < n && CLOSERS.has(str[i])) {
+    throw new Error(`Unmatched '${str[i]}' at position ${i}`);
   }
   return { atoms, rangeSpans };
 }
@@ -763,6 +765,68 @@ function netChargeOfFragment(str, valenceBounds) {
   return resolved.reduce((s, a) => s + (a.valence || 0) * a.count, 0);
 }
 
+// The same sum with every element at its usual (first-listed) valence
+// instead of whichever brings the fragment closest to 0, or null if the
+// fragment doesn't parse.
+function usualChargeOfFragment(str) {
+  try {
+    return parseFormula(str)
+      .atoms.map(resolveAtom)
+      .filter((a) => a.symbol !== "Bx")
+      .reduce((s, a) => s + (a.valence ?? a.ambiguousValences?.[0] ?? 0) * repCount(a.count), 0);
+  } catch {
+    return null;
+  }
+}
+
+// The split of a shared site that follows the IMA's listing order: occupants
+// are listed most to least abundant, so counts can't go up along the list
+// (for '(Ti,Zr,Nb)_5_', Ti >= Zr >= Nb). Among the splits that fill N places
+// with a total charge of `charge`, picks the one that gives as much as
+// possible to the first occupant, then the second, and so on — e.g. Ti_5_
+// when that alone balances. valences are the occupants' charges in listed
+// order. Returns the counts, or null when no ordered split balances.
+//
+// Written as differences d_j = c_j - c_(j+1) >= 0, the counts are
+// c_i = sum of d_j for j >= i, which leaves two equations (sum of
+// (j+1)*d_j = N, sum of d_j*V_j = charge, V_j = sum of the first j+1
+// valences) over non-negative d. The best split is a corner of that region,
+// where at most two d's aren't 0, so every single d and pair of d's is tried.
+function orderedSiteSplit(valences, N, charge) {
+  const k = valences.length;
+  const V = valences.map((_, j) => valences.slice(0, j + 1).reduce((s, v) => s + v, 0));
+  const EPS = 1e-9;
+  const candidates = [];
+  const countsOf = (d) => valences.map((_, i) => d.slice(i).reduce((s, x) => s + x, 0));
+  for (let j = 0; j < k; j++) {
+    const dj = N / (j + 1);
+    if (Math.abs(V[j] * dj - charge) < 1e-6) {
+      const d = new Array(k).fill(0);
+      d[j] = dj;
+      candidates.push(countsOf(d));
+    }
+    for (let m = j + 1; m < k; m++) {
+      // (j+1)*a + (m+1)*b = N and V[j]*a + V[m]*b = charge
+      const det = (j + 1) * V[m] - (m + 1) * V[j];
+      if (Math.abs(det) < EPS) continue;
+      const a = (N * V[m] - (m + 1) * charge) / det;
+      const b = ((j + 1) * charge - V[j] * N) / det;
+      if (a < -EPS || b < -EPS) continue;
+      const d = new Array(k).fill(0);
+      d[j] = Math.max(a, 0);
+      d[m] = Math.max(b, 0);
+      candidates.push(countsOf(d));
+    }
+  }
+  if (candidates.length === 0) return null;
+  // Most to the first occupant, then the next.
+  candidates.sort((x, y) => {
+    for (let i = 0; i < k; i++) if (Math.abs(x[i] - y[i]) > 1e-9) return y[i] - x[i];
+    return 0;
+  });
+  return candidates[0];
+}
+
 // A site-sharing group (e.g. '(Si,Al)_8_') with a stated total site count
 // has exactly one split that brings the whole formula's net charge to zero
 // as soon as its occupants fall into two *different*, unambiguous valences
@@ -783,7 +847,7 @@ function netChargeOfFragment(str, valenceBounds) {
 // Returns { formulaStr, isModifiedIdeal } on success, or null if no
 // physically-valid split is determinable — in which case the caller falls
 // back to the generic range split.
-function tryChargeBalanceSplit(formulaStr, group, parsedTokens, valenceBounds) {
+function tryChargeBalanceSplit(formulaStr, group, parsedTokens, valenceBounds, { ordered = false } = {}) {
   const { start, end } = group;
 
   // The group must actually be bracketed (not a bare comma spanning the
@@ -812,6 +876,29 @@ function tryChargeBalanceSplit(formulaStr, group, parsedTokens, valenceBounds) {
   // (e.g. bare 'Fe') can't be assigned a share with any confidence, so the
   // whole split is left undetermined rather than guessed at.
   if (parsedTokens.some((t) => !t.valenceSet || t.valenceSet.length !== 1)) return null;
+
+  if (ordered) {
+    // On its own, the rest of the formula takes whatever valences bring it
+    // closest to 0, which can be wrong without the site (Taramellite's bare
+    // Cl comes out +7, not -1), so its usual valences are tried too. The
+    // split is kept only if the whole formula then balances.
+    for (const charge of new Set([restCharge, usualChargeOfFragment(rest)])) {
+      if (charge === null) continue;
+      const counts = orderedSiteSplit(parsedTokens.map((t) => t.valenceSet[0]), N, -charge);
+      if (!counts) continue;
+      // An occupant left at 0 is dropped ('(Ti,Zr,Nb)_5_' -> 'Ti_5_').
+      const replacement = parsedTokens
+        .map((t, k) => (counts[k] > 1e-9 ? `${t.raw}_${formatSplitNum(counts[k])}_` : ""))
+        .join("");
+      const split = formulaStr.slice(0, openIdx) + replacement + formulaStr.slice(afterGroup);
+      try {
+        if (Math.abs(netChargeOfFragment(split, valenceBounds)) < 1e-6) return { formulaStr: split, isModifiedIdeal: true };
+      } catch {
+        // try the next charge
+      }
+    }
+    return null;
+  }
 
   // Group occupants by their pinned valence, in the order each valence
   // first appears in the list.
@@ -952,7 +1039,7 @@ function commaGroupHasCommonValence(parsedTokens) {
 // only pins down a unique answer when it's the one heterovalent group left;
 // two or more at once leaves the balance equation underdetermined, and the
 // whole formula is rejected rather than guessed at.
-function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds) {
+function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds, options) {
   // Phase 0: every site at its first (dominant) occupant. Whatever comes
   // after a comma is optional, so when that alone is charge-balanced it's
   // the answer — e.g. Zirconolite's '(Ca,Y)Zr(Ti,Mg,Al)_2_O_7_' is just
@@ -994,7 +1081,7 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds
     const spanEnd = stripBracket ? end + 1 : end;
     result = result.slice(0, spanStart) + leftmost.raw + result.slice(spanEnd);
   }
-  if (!anyHeterovalent) return rebalanceCollapsed(formulaStr, groups, result, valenceBounds);
+  if (!anyHeterovalent) return rebalanceCollapsed(formulaStr, groups, result, valenceBounds, options);
 
   // Phase 2: re-locate whatever heterovalent group(s) are left in the now
   // partially-collapsed string (their offsets shifted as phase 1 replaced
@@ -1003,7 +1090,7 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds
   const remaining = commaGroups(result);
   if (remaining.length === 1 && isSimpleCommaGroup(result, remaining[0])) {
     const parsedTokens = parseCommaTokens(result.slice(remaining[0].start, remaining[0].end));
-    const balanced = tryChargeBalanceSplit(result, remaining[0], parsedTokens, valenceBounds);
+    const balanced = tryChargeBalanceSplit(result, remaining[0], parsedTokens, valenceBounds, options);
     if (balanced !== null) return balanced.formulaStr;
   }
 
@@ -1044,7 +1131,7 @@ function collapseEveryGroupToLeftmost(formulaStr, groups) {
 // rest of the pipeline can't re-resolve it into imbalance. Returns the plain
 // leftmost collapse if it was already balanced, if the formula has a range or
 // variable subscript, or if no group can be split to balance it.
-function rebalanceCollapsed(formulaStr, groups, collapsed, valenceBounds) {
+function rebalanceCollapsed(formulaStr, groups, collapsed, valenceBounds, options) {
   const EPS = 1e-6;
   let collapsedCharge;
   try {
@@ -1109,7 +1196,7 @@ function rebalanceCollapsed(formulaStr, groups, collapsed, valenceBounds) {
     const shifted = { ...target, start: target.start + shift, end: target.end + shift };
     const pinned = parseCommaTokens(str.slice(shifted.start, shifted.end)).map((t) => pinToken(t, str, shifted));
     if (pinned.some((t) => !t)) continue;
-    const balanced = tryChargeBalanceSplit(str, shifted, pinned, valenceBounds);
+    const balanced = tryChargeBalanceSplit(str, shifted, pinned, valenceBounds, options);
     if (balanced === null) continue;
     try {
       if (Math.abs(netChargeOfFragment(balanced.formulaStr, valenceBounds)) < EPS) return balanced.formulaStr;
@@ -1144,7 +1231,10 @@ function dropOptionalRee(formulaStr) {
 // isModifiedIdeal }: isModifiedIdeal flags a result that came from the
 // multi-group leftmost-pick collapse rather than the formula the user
 // actually typed, so the UI can label it as such.
-function expandCommaGroup(formulaStr, valenceBounds) {
+// options.ordered: split a heterovalent site in listed order (see
+// orderedSiteSplit) rather than evenly within each valence; used for each
+// end of a range formula (see rangeEndsBalanced).
+function expandCommaGroup(formulaStr, valenceBounds, options = {}) {
   const groups = commaGroups(formulaStr);
   if (groups.length === 0) return { formulaStr, isModifiedIdeal: false };
   // The numeric-range split below only works when there's exactly one
@@ -1152,7 +1242,7 @@ function expandCommaGroup(formulaStr, valenceBounds) {
   // isSimpleCommaGroup and collapseMultipleCommaGroupsToLeftmost.
   if (groups.length > 1 || !isSimpleCommaGroup(formulaStr, groups[0])) {
     return {
-      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds),
+      formulaStr: collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds, options),
       isModifiedIdeal: true,
     };
   }
@@ -1165,7 +1255,7 @@ function expandCommaGroup(formulaStr, valenceBounds) {
   // have a single charge-balanced split instead of an arbitrary range — try
   // that first, and only fall through to the generic split/validation below
   // if no unique valid solution exists.
-  const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens, valenceBounds);
+  const balanced = tryChargeBalanceSplit(formulaStr, groups[0], parsedTokens, valenceBounds, options);
   if (balanced !== null) return balanced;
 
   if (!commaGroupHasCommonValence(parsedTokens)) {
@@ -1370,13 +1460,47 @@ export function analyze(rawInput, { valenceBounds } = {}) {
   // "modified ideal formula" — isModifiedIdeal flags that for the UI.
   const { formulaStr: reeDroppedStr, changed: droppedRee } = dropOptionalRee(formulaStr);
   const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(reeDroppedStr, valenceBounds);
+  const result = analyzeOne(expandedFormulaStr, valenceBounds);
+
+  // A shared site is split once for the whole range, which can leave both
+  // ends unbalanced (Belyankinite's 'Ca_1-2_(Ti,Zr,Nb)_5_' split at Ca1.5
+  // comes out -1 at Ca1 and +1 at Ca2). Then each end is split on its own.
+  if (result.isRange && result.columns.some((c) => Math.abs(c.netCharge) > 1e-6)) {
+    const ends = rangeEndsBalanced(reeDroppedStr, valenceBounds);
+    if (ends) return { name, isModifiedIdeal: true, originalFormulaStr, ...ends };
+  }
 
   return {
     name,
     isModifiedIdeal: isModifiedIdeal || droppedRee,
     originalFormulaStr,
-    ...analyzeOne(expandedFormulaStr, valenceBounds),
+    ...result,
   };
+}
+
+// Each end of a range formula with a shared site, its site split in listed
+// order (see orderedSiteSplit): two columns when both ends balance, one plain
+// result when only one does (Belyankinite: Ca1 can't balance with
+// Ti >= Zr >= Nb, so only Ca_2_Ti_5_O_12_·9H_2_O is left), or null when
+// neither does or the formula has no shared site.
+function rangeEndsBalanced(formulaStr, valenceBounds) {
+  if (commaGroups(formulaStr).length === 0) return null;
+  const RANGE = /_(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)_/g;
+  if (!formulaStr.match(RANGE)) return null;
+  const balanced = [];
+  for (const which of [1, 2]) {
+    const endStr = formulaStr.replace(RANGE, (m, low, high) => `_${which === 1 ? low : high}_`);
+    try {
+      const { formulaStr: split } = expandCommaGroup(endStr, valenceBounds, { ordered: true });
+      const end = analyzeOne(split, valenceBounds);
+      if (!end.isRange && Math.abs(end.netCharge) < 1e-6) balanced.push(end);
+    } catch {
+      // this end can't be read on its own
+    }
+  }
+  if (balanced.length === 0) return null;
+  if (balanced.length === 1) return balanced[0];
+  return { isRange: true, columns: balanced };
 }
 
 // Picks out a single end-member column from a ranged analyze() result and

@@ -124,11 +124,21 @@ export default function LandingPage({ onEdit }) {
   }, [lookupUuid, lookup, fetched, amcDivisor]);
   // Waits for the ?UUID= lookup, since the ideal formula guides how
   // citations are read.
-  const empiricalRows = useMemo(
-    () =>
-      isLoadingMineral ? [] : buildEmpiricalRows(fetched?.mineralName ?? name, citations, idealRows, formulaInput ?? ""),
-    [isLoadingMineral, fetched, citations, idealRows, formulaInput]
-  );
+  // citationErrors: the citations whose formula couldn't be read, reported
+  // above the table so a bad formula isn't silently missing from it. The
+  // same citation and formula listed twice in the data is reported once.
+  const { rows: empiricalRows, errors: citationErrors } = useMemo(() => {
+    if (isLoadingMineral) return { rows: [], errors: [] };
+    const built = buildEmpiricalRows(fetched?.mineralName ?? name, citations, idealRows, formulaInput ?? "");
+    const seen = new Set();
+    const errors = built.errors.filter((e) => {
+      const key = `${e.citation}\n${e.formula}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return { rows: built.rows, errors };
+  }, [isLoadingMineral, fetched, citations, idealRows, formulaInput]);
   const isLoadingCitations = Boolean(mineralId) && fetched === undefined && !fetchError;
 
   // Ideal formula column(s) first, citation columns after. Never deduped
@@ -153,13 +163,14 @@ export default function LandingPage({ onEdit }) {
   // Unchecked first collapses duplicate citations to the oldest one (see
   // dedupeCitationRows, which prefers a citation with AMC label valences),
   // then drops any column that matches an earlier one.
-  const displayedRows = useMemo(
-    () =>
-      showMatchingWeights
-        ? rows
-        : collapseMatchingRows([...idealRows, ...dedupeCitationRows(empiricalRows)]),
-    [rows, idealRows, empiricalRows, showMatchingWeights]
+  const collapsedRows = useMemo(
+    () => collapseMatchingRows([...idealRows, ...dedupeCitationRows(empiricalRows)]),
+    [idealRows, empiricalRows]
   );
+  const displayedRows = showMatchingWeights ? rows : collapsedRows;
+  // The checkbox is only shown when it changes something: when unchecking
+  // it would actually hide a column.
+  const hasMatchingColumns = collapsedRows.length < rows.length;
 
   const [openColumnIndex, setOpenColumnIndex] = useState(null);
 
@@ -227,6 +238,26 @@ export default function LandingPage({ onEdit }) {
           </div>
         )}
 
+        {citationErrors.length > 0 && openColumnIndex === null && (
+          <div
+            style={{
+              marginBottom: 18,
+              padding: "12px 14px",
+              borderRadius: 8,
+              background: "#fbeee5",
+              border: `1px solid ${COLORS.warn}`,
+              color: COLORS.warn,
+              fontSize: 13.5,
+            }}
+          >
+            {citationErrors.map((e, i) => (
+              <div key={i} style={i > 0 ? { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.warn}55` } : undefined}>
+                <CitationError {...e} />
+              </div>
+            ))}
+          </div>
+        )}
+
         {openColumnIndex !== null ? (
           <SummaryDetail
             result={displayedRows[openColumnIndex].result}
@@ -235,7 +266,7 @@ export default function LandingPage({ onEdit }) {
           />
         ) : rows.length > 0 ? (
           <>
-            {(rows.length > 1 || amcScale) && (
+            {(hasMatchingColumns || amcScale) && (
             <div
               style={{
                 display: "flex",
@@ -273,7 +304,7 @@ export default function LandingPage({ onEdit }) {
                 </select>
               </label>
             )}
-            {rows.length > 1 && (
+            {hasMatchingColumns && (
               <label
                 style={{
                   display: "flex",
@@ -344,6 +375,37 @@ export default function LandingPage({ onEdit }) {
           </button>
         </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// One unreadable citation formula: which citation, its formula as written
+// (with the bad bracket highlighted when that's the problem), and why it
+// couldn't be read. A bracket problem is described in plain words; any
+// other parser error is shown as is.
+function CitationError({ citation, formula, error, bracketProblem }) {
+  const source = citation ? `the ${/^R\d{6}/i.test(citation.trim()) ? "RRUFF " : ""}formula for ${citation}` : "a citation's formula";
+  return (
+    <div style={{ margin: "4px 0" }}>
+      <div>Couldn't read {source}, so it's left out of the table:</div>
+      <div style={{ fontFamily: COLORS.mono, margin: "6px 0", color: COLORS.text, wordBreak: "break-all" }}>
+        {bracketProblem ? (
+          <>
+            {formula.slice(0, bracketProblem.index)}
+            <mark style={{ background: COLORS.warn, color: "#fff", padding: "0 2px", borderRadius: 2 }}>
+              {formula[bracketProblem.index]}
+            </mark>
+            {formula.slice(bracketProblem.index + 1)}
+          </>
+        ) : (
+          formula
+        )}
+      </div>
+      <div>
+        {bracketProblem
+          ? `The parentheses or brackets don't match. ${bracketProblem.message}`
+          : error}
       </div>
     </div>
   );

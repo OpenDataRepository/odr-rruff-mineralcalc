@@ -59,7 +59,7 @@ async function main() {
   for (const r of records) {
     if (!r.empiricalFormula) continue;
 
-    const rows = buildEmpiricalRows(
+    const { rows } = buildEmpiricalRows(
       r.mineralName,
       [{ formula: r.empiricalFormula, cell: null, citation: "" }],
       buildIdealRows(r.mineralName, r.idealFormula),
