@@ -305,7 +305,12 @@ const idealFormulaOf = (record) => {
 // A ?UUID= link to any record in RECORD_READERS. Resolves to
 // { name, formulaStr, citations, source, showsMatchingColumns }.
 export async function loadMineralForRecord(uuid, options) {
-  const record = await loadOdrRecord(uuid, options);
+  return mineralFromRecord(await loadOdrRecord(uuid, options), options);
+}
+
+// The same, for a record already in hand (e.g. a RRUFF sample from a dataset
+// search, as scripts/charge-balance-report.mjs uses).
+export async function mineralFromRecord(record, options) {
   const reader = RECORD_READERS.find((r) => r.databaseUuid === record.database_uuid);
   if (!reader) {
     throw new Error(`The record is from database ${record.database_uuid || "(unknown)"}, which the calculator can't read yet`);

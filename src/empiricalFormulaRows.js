@@ -249,19 +249,58 @@ export function citationScaleFactor(citationAtoms, idealAtoms) {
 // idealFormulaStr is the ideal formula as written, used for the RE/REE/TR
 // substitution (see substituteRee) — taken raw rather than from idealRows so
 // it still works when the ideal formula itself doesn't parse.
+// The first bracket problem in a formula as written (before any conversion),
+// or null if its brackets pair up: { message, index }, where index is the
+// offending bracket's position in `formula`.
+export function bracketProblem(formula) {
+  const pairs = { "(": ")", "[": "]", "{": "}" };
+  const openers = { ")": "(", "]": "[", "}": "{" };
+  const stack = [];
+  for (let i = 0; i < formula.length; i++) {
+    const c = formula[i];
+    if (pairs[c]) {
+      stack.push(i);
+    } else if (openers[c]) {
+      if (!stack.length) {
+        return { index: i, message: `There's an extra '${c}' with no '${openers[c]}' before it to match.` };
+      }
+      const open = stack.pop();
+      if (pairs[formula[open]] !== c) {
+        return { index: i, message: `The '${formula[open]}' is closed with '${c}' instead of '${pairs[formula[open]]}'.` };
+      }
+    }
+  }
+  if (stack.length) {
+    const open = stack[stack.length - 1];
+    return { index: open, message: `There's a '${formula[open]}' that's never closed with '${pairs[formula[open]]}'.` };
+  }
+  return null;
+}
+
+// Builds the citation columns. Returns { rows, errors }: a citation whose
+// formula can't be read is left out of rows and listed in errors as
+// { citation, formula, error, bracketProblem } so the page can say why it's
+// missing (formula is the text as cited; bracketProblem, from the function
+// above, is set when its brackets don't pair up).
 export function buildEmpiricalRows(name, citations, idealRows = [], idealFormulaStr = "") {
   const valenceBounds = valenceBoundsOf(idealRows.map((r) => r.result));
   const reeElement = idealReeElement(name, idealFormulaStr);
   const requiredElements = requiredElementsOf(idealFormulaStr);
   const idealH = idealHydrogenCount(idealRows, idealFormulaStr);
   const rows = [];
+  const errors = [];
   for (const { formula, cell, citation, amcValences } of citations) {
+    const fail = (error) => errors.push({ citation, formula, error, bracketProblem: bracketProblem(formula || "") });
     const converted = isFormulaFormatted(formula) ? formula : parseChemicalFormula(formula);
     const reeResult = substituteRee(converted, reeElement);
     const { reeSubstitution } = reeResult;
     let { formulaStr } = reeResult;
     try {
       let result = analyze(`${name}\t${formulaStr}`, { valenceBounds });
+      if (!result) {
+        if (formula && formula.trim()) fail("No elements were found in it.");
+        continue;
+      }
       // A citation written at a multiple of the ideal formula's size (O14
       // against O7) is rewritten at the ideal's size; weight percents don't
       // change. Left as cited when it can't be scaled (see scaleFormulaStr)
@@ -337,11 +376,12 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
         }
       }
     } catch (e) {
-      // Skip a citation that doesn't parse — the rest of the table still
-      // renders.
+      // Leave out a citation that doesn't parse — the rest of the table
+      // still renders, and the page reports it from errors.
+      fail(e.message);
     }
   }
-  return rows;
+  return { rows, errors };
 }
 
 // Collapses the full ideal+empirical row list down to one column per unique

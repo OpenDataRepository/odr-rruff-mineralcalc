@@ -40,13 +40,16 @@ function Stat({ label, value, warn }) {
         border: `1px solid ${COLORS.border}`,
         borderRadius: 8,
         padding: "10px 12px",
-        flex: "1 1 0",
+        // Sized by content so a longer label ("Cations (M) excluding H")
+        // gets the room it needs; the label wraps only on a narrow screen.
+        flex: "1 1 auto",
         minWidth: 0,
         whiteSpace: "nowrap",
       }}
     >
       <div
         style={{
+          whiteSpace: "normal",
           fontSize: 10.5,
           letterSpacing: "0.08em",
           textTransform: "uppercase",
@@ -100,11 +103,13 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
   const colWidths = showValence ? DETAIL_COL_WIDTHS : DETAIL_COL_WIDTHS_METALLIC;
   // Cations (M) and anions (X) are the summed counts of the atoms with a
   // positive or negative valence; atoms with no known valence count as neither.
+  // H is left out of the cations, the way the literature totals them.
   let cationCount = 0;
   let anionCount = 0;
   for (const a of result.atoms) {
-    if (a.valence > 0) cationCount += a.count;
-    else if (a.valence < 0) anionCount += a.count;
+    if (a.valence > 0) {
+      if (a.symbol !== "H") cationCount += a.count;
+    } else if (a.valence < 0) anionCount += a.count;
   }
   return (
     <div style={{ maxWidth: 640, margin: "22px auto 0" }}>
@@ -155,7 +160,7 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
             warn={Math.abs(result.netCharge) > 0.001}
           />
         )}
-        {showValence && <Stat label="Cations (M)" value={cationCount.toFixed(3)} />}
+        {showValence && <Stat label="Cations (M) excluding H" value={cationCount.toFixed(3)} />}
         {showValence && <Stat label="Anions (X)" value={anionCount.toFixed(3)} />}
       </div>
 
