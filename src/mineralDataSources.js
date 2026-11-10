@@ -202,6 +202,9 @@ const RRUFF_SAMPLE_DB = "ddc5e9ba834ad596cc31aebb1225";
 const RRUFF_POWDER_XRD_DB = "a519503f9a1b13329323d8cdb269";
 const RRUFF_XRD_REFINEMENT_DB = "77cc5789aaef93181abcfae1c582";
 const RRUFF_MICROPROBE_DB = "b4d723b79487a7b45136b0f2a133";
+// "RRUFF Chemistry & Cell Parameters" (the formula-weights page's records).
+const RRUFF_CELLPARAMS_DB = "8877cadc651bc3e745aab4218b13";
+const REFERENCE_DB = "e7e7e1706e6163550eb03129883a";
 
 const childrenIn = (record, databaseUuid) =>
   (record?.records || []).filter((child) => child.database_uuid === databaseUuid);
@@ -223,6 +226,27 @@ function rruffSampleCitationsOf(sample, probes = childrenIn(sample, RRUFF_MICROP
       cell,
       citation: getRecordField(probe, "Child RRUFF ID") || getRecordField(sample, "RRUFF ID") || "",
     }));
+}
+
+// A Chemistry & Cell Parameters record as a citation column, labelled with
+// its reference's journal line, as in AMCSD's
+// "European Journal of Mineralogy 29 (2017) 915-922". Null without a
+// Chemistry.
+function cellparamsCitationOf(record) {
+  const formula = getRecordField(record, "Chemistry")?.replace(/\*/g, "·");
+  if (!formula) return null;
+  const ref = childrenIn(record, REFERENCE_DB)[0];
+  const field = (name) => getRecordField(ref, name) || "";
+  const year = field("Year");
+  const journal = [field("Journal"), field("Volume"), year && `(${year})`, field("Pages")]
+    .filter(Boolean)
+    .join(" ");
+  const id = getRecordField(record, "Cell Parameter ID");
+  return {
+    formula,
+    cell: cellOf(record),
+    citation: journal || (id ? `Cell Parameter ID ${id}` : ""),
+  };
 }
 
 // The plugin's RRUFF sample lookup, or devRecordProxy.js's under
@@ -278,6 +302,16 @@ const RECORD_READERS = [
       const citations = rruffSampleCitationsOf(sample, [record]);
       if (citations.length === 0) throw new Error("The microprobe record has no Measured Chemistry");
       return { mineralParent: sample, citations };
+    },
+  },
+  {
+    databaseUuid: RRUFF_CELLPARAMS_DB,
+    label: "RRUFF cell parameters",
+    showsMatchingColumns: true,
+    // A record without a Chemistry shows the ideal formula alone.
+    async read(record) {
+      const citation = cellparamsCitationOf(record);
+      return { mineralParent: record, citations: citation ? [citation] : [] };
     },
   },
   {
