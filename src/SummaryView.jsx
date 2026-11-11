@@ -1,6 +1,8 @@
 import React, { memo, useMemo } from "react";
 import { COLORS, renderFormula, renderMineralName, backButtonStyle } from "./shared.jsx";
-import DetailedView from "./DetailedView.jsx";
+import DetailedView, { ViewTabs, TABBED_TABLE_RADIUS } from "./DetailedView.jsx";
+import { computeOxides } from "./oxideWeights.js";
+import { useWeightView } from "./weightView.js";
 import { formatDetailText, downloadTxt } from "./reportText.js";
 
 const downloadButtonStyle = {
@@ -125,23 +127,6 @@ function hydrogenAddedTitle({ count, idealH, element, elementIdealCount, element
   );
 }
 
-// Hover text for the AMC label valences note (see amcChemistry.js).
-function amcValencesTitle({ usable, labelled, rejected, partial, mismatches, scale }) {
-  const lines = [];
-  if (usable) {
-    lines.push(`Valences read from the AMC file's atom labels: ${labelled.map((l) => `${l.label} (${l.valence}+)`).join(", ")}`);
-  } else {
-    lines.push(
-      "Valence labels found in the AMC file, but the element totals don't match the record's Chemistry field, " +
-        `so the Chemistry formula is used as is: ${mismatches.map((m) => `${m.element} ${m.ours} from the atom table vs ${m.chemistry}`).join(", ")}`
-    );
-  }
-  if (partial.length) lines.push(`Some ${partial.join(", ")} sites have no valence label; that part is still guessed.`);
-  if (rejected.length) lines.push(`Ignored (not a valence of that element): ${rejected.map((l) => l.label).join(", ")}`);
-  if (scale !== 1) lines.push(`The atom table's formula unit is scaled by ${scale} to match the Chemistry field.`);
-  return lines.join("\n");
-}
-
 // Shows the union of elements across a set of formulas as rows, with one
 // percent-of-mass column per formula (labeled (1), (2), ...). A formula
 // missing an element that another has just gets a blank cell rather than a
@@ -164,6 +149,47 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
     }
     return order;
   }, [rows]);
+
+  // Oxide weight percents per column (null where computeOxides can't make
+  // one — not charge balanced, or an anion other than O), and the union of
+  // oxides across the columns in first-seen order. Fe2+ and Fe3+ stay
+  // separate rows (FeO, Fe2O3), so they're keyed by element and valence.
+  const oxideColumns = useMemo(() => rows.map((r) => computeOxides(r.result)), [rows]);
+  const oxideRows = useMemo(() => {
+    const seen = new Map();
+    for (const col of oxideColumns) {
+      for (const o of col || []) {
+        const key = `${o.symbol}|${o.valence}`;
+        if (!seen.has(key)) seen.set(key, { key, formula: o.formula });
+      }
+    }
+    return [...seen.values()];
+  }, [oxideColumns]);
+  const hasOxides = oxideRows.length > 0;
+  const [view, setView] = useWeightView();
+  const showOxides = hasOxides && view === "oxides";
+
+  // The table body's rows for whichever tab is showing: a label plus one
+  // percent (or null for a blank cell) per column.
+  const bodyRows = showOxides
+    ? oxideRows.map(({ key, formula }) => ({
+        key,
+        label: renderFormula(formula),
+        values: oxideColumns.map((col) => {
+          const o = col?.find((x) => `${x.symbol}|${x.valence}` === key);
+          return o ? o.percent : null;
+        }),
+      }))
+    : elements.map((symbol) => ({
+        key: symbol,
+        label: symbol,
+        // An element can appear in several rows (e.g. Fe2+ and Fe3+ in
+        // magnetite), so sum all of them rather than taking the first.
+        values: rows.map((r) => {
+          const matches = r.result.atoms.filter((a) => a.symbol === symbol);
+          return matches.length ? matches.reduce((sum, a) => sum + a.percent, 0) : null;
+        }),
+      }));
 
   // Native metals (e.g. Cu, Au) aren't ionic — a "net charge" is meaningless
   // for them, so it's hidden and only atomic weight percents are shown. See
@@ -210,10 +236,15 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
   return (
     <div style={{ marginTop: 14 }}>
       <FormulaHeader title={title} formulaStr={formulaStr} onBack={onBack} />
+      {hasOxides && (
+        <div style={{ maxWidth: tableWidth, margin: "0 auto" }}>
+          <ViewTabs view={view} onChange={setView} />
+        </div>
+      )}
       <div
         style={{
           border: `1px solid ${COLORS.border}`,
-          borderRadius: 10,
+          borderRadius: hasOxides ? TABBED_TABLE_RADIUS : 10,
           overflow: "hidden",
           maxWidth: tableWidth,
           margin: "0 auto",
@@ -258,7 +289,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                     borderRight: `1px solid ${COLORS.border}`,
                   }}
                 >
-                  Element
+                  {showOxides ? "Oxide" : "Element"}
                 </th>
                 {rows.map((r, idx) => (
                   <th
@@ -278,12 +309,12 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
               </tr>
             </thead>
             <tbody>
-              {elements.map((symbol, i) => (
+              {bodyRows.map(({ key, label, values }, i) => (
                 <tr
-                  key={symbol}
+                  key={key}
                   style={{ background: i % 2 ? "transparent" : "rgba(0,0,0,0.025)" }}
                 >
-                  {/* Sticky so the element symbol stays in view once the
+                  {/* Sticky so the element/oxide stays in view once the
                       table scrolls horizontally — needs its own opaque
                       background (the striping above is set on the <tr> and
                       would otherwise show scrolled-past columns bleeding
@@ -299,20 +330,21 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                       borderRight: `1px solid ${COLORS.border}`,
                     }}
                   >
-                    {symbol}
+                    {label}
                   </td>
-                  {rows.map((r, idx) => {
-                    // An element can appear in several rows (e.g. Fe2+ and Fe3+
-                    // in magnetite), so sum all of them rather than taking the first.
-                    const matches = r.result.atoms.filter((a) => a.symbol === symbol);
-                    const atom = matches.length > 0;
-                    const percent = matches.reduce((sum, a) => sum + a.percent, 0);
-                    return (
-                      <td key={idx} style={{ ...summaryTdStyle, color: atom ? COLORS.accent : COLORS.textDim, fontWeight: 700 }}>
-                        {atom ? percent.toFixed(3) : "—"}
-                      </td>
-                    );
-                  })}
+                  {values.map((value, idx) => (
+                    <td
+                      key={idx}
+                      style={{ ...summaryTdStyle, color: value != null ? COLORS.accent : COLORS.textDim, fontWeight: 700 }}
+                      title={
+                        showOxides && !oxideColumns[idx]
+                          ? "No oxides: the formula doesn't charge balance, or has an anion other than O"
+                          : undefined
+                      }
+                    >
+                      {value != null ? value.toFixed(3) : "—"}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -461,12 +493,6 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                 title={hydrogenAddedTitle(r.hydrogenAdded)}
               >
                 , H from ideal formula
-              </span>
-            )}
-            {/* Whether the AMC label valences were used. */}
-            {r.amcValences && (
-              <span style={{ color: COLORS.warn, fontWeight: 600 }} title={amcValencesTitle(r.amcValences)}>
-                {r.amcValences.usable ? ", valences from AMC labels" : ", AMC label valences not used"}
               </span>
             )}
             {/* Elements the ideal formula requires that this citation never

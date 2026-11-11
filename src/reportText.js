@@ -1,5 +1,6 @@
 import { valenceLabel } from "./DetailedView.jsx";
 import { plainFormulaString, displayFormulaStr } from "./shared.jsx";
+import { computeOxides } from "./oxideWeights.js";
 
 // Tab characters land at fixed tab-stop widths in a plain text viewer
 // (Notepad and the like) — they don't widen to fit each column's actual
@@ -41,8 +42,8 @@ export function formatDetailText(result) {
   const colWidths = headers.map((h, col) =>
     Math.max(h.length, ...dataRows.map((r) => r[col].length), totalRow[col].length)
   );
-  const formatRow = (row) =>
-    row.map((cell, col) => padCell(cell, colWidths[col], col === 0 ? "left" : "right")).join("  ");
+  const formatRow = (row, widths = colWidths) =>
+    row.map((cell, col) => padCell(cell, widths[col], col === 0 ? "left" : "right")).join("  ");
 
   const plainFormula = plainFormulaString(displayFormulaStr(result));
   const lines = [];
@@ -53,6 +54,28 @@ export function formatDetailText(result) {
   lines.push(formatRow(headers));
   for (const row of dataRows) lines.push(formatRow(row));
   lines.push(formatRow(totalRow));
+
+  // Oxide weight percents, only for a charge-balanced formula whose only
+  // anion is O (see computeOxides).
+  const oxides = computeOxides(result);
+  if (oxides) {
+    const oxHeaders = ["Oxide", "Count", "Molar mass (g/mol)", "Total mass (g/mol)", "% of mass"];
+    const oxRows = oxides.map((o) => [
+      plainFormulaString(o.formula),
+      o.count.toFixed(3),
+      o.weight.toFixed(3),
+      o.totalMass.toFixed(3),
+      o.percent.toFixed(3),
+    ]);
+    const oxTotal = ["Total", "", "", result.totalMass.toFixed(3), "100.000"];
+    const oxWidths = oxHeaders.map((h, col) =>
+      Math.max(h.length, ...oxRows.map((r) => r[col].length), oxTotal[col].length)
+    );
+    lines.push("");
+    lines.push(formatRow(oxHeaders, oxWidths));
+    for (const row of oxRows) lines.push(formatRow(row, oxWidths));
+    lines.push(formatRow(oxTotal, oxWidths));
+  }
   return lines.join("\n");
 }
 
