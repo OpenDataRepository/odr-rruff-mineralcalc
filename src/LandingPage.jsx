@@ -357,8 +357,8 @@ export default function LandingPage({ onEdit }) {
             // formula from the URL.
             onClick={() =>
               openColumnIndex !== null
-                ? onEdit(name, displayFormulaStr(displayedRows[openColumnIndex].result), true)
-                : onEdit(name, formulaInput, false)
+                ? onEdit(name, displayFormulaStr(displayedRows[openColumnIndex].result))
+                : onEdit(name, formulaInput)
             }
             style={{
               background: COLORS.accent,
