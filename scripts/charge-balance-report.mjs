@@ -140,8 +140,7 @@ async function main() {
     const measured = Object.fromEntries(mineral.citations.map((c) => [c.citation, c.formula]));
     for (const r of rows) {
       checked++;
-      // Native elements have no charge (the page hides it), so they're skipped.
-      if (r.result.isMetallic || Math.abs(r.result.netCharge) <= TOLERANCE) continue;
+      if (Math.abs(r.result.netCharge) <= TOLERANCE) continue;
       flagged++;
       lines.push(
         [r.citation, mineral.name, "Not charge balanced", r.result.netCharge.toFixed(3), anionsOf(r.result),
