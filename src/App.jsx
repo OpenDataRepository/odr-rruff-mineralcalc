@@ -6,19 +6,18 @@ export default function App() {
   // null = show the read-only result page (page 1, which now also shows the
   // empirical/citation comparison table); otherwise the {name, formulaStr}
   // the editor (page 2) should open pre-filled with (whatever was showing on
-  // the result page when "Custom Formula" was clicked), plus whether a
-  // detail view was open, so the editor opens on the detail view too.
+  // the result page when "Custom Formula" was clicked). The editor always
+  // opens on the full detail view.
   const [editing, setEditing] = useState(null);
 
   if (!editing) {
-    return <LandingPage onEdit={(name, formulaStr, openDetail) => setEditing({ name, formulaStr, openDetail })} />;
+    return <LandingPage onEdit={(name, formulaStr) => setEditing({ name, formulaStr })} />;
   }
 
   return (
     <MineralFormulaParser
       initialName={editing.name}
       initialFormula={editing.formulaStr}
-      initialOpenDetail={editing.openDetail}
       onBack={() => setEditing(null)}
     />
   );

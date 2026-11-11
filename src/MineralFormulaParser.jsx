@@ -644,12 +644,7 @@ function mergeAtoms(atoms) {
 // and show only atomic weight percents. A formula containing even one
 // unrecognized element is treated conservatively (not metallic), since
 // there's no data to rule out a negative valence for it.
-// A formula of one element alone (native S, Se, Te, C…) counts too, even
-// when that element can be negative: a native element is uncharged (0),
-// which none of its listed valences would give.
 function isMetallicFormula(atoms) {
-  const symbols = new Set(atoms.map((a) => a.symbol));
-  if (symbols.size === 1 && ELEMENTS[atoms[0].symbol]) return true;
   return atoms.every((a) => {
     const data = ELEMENTS[a.symbol];
     if (!data) return false;
@@ -1605,7 +1600,7 @@ export const EXAMPLES = [
 // there's no live database to point it at yet — flip this on once there is.
 const SHOW_API_LOADER = false;
 
-export default function MineralFormulaParser({ initialName, initialFormula, initialOpenDetail, onBack } = {}) {
+export default function MineralFormulaParser({ initialName, initialFormula, onBack } = {}) {
   const [nameInput, setNameInput] = useState(() => {
     if (initialName) return initialName;
     const params = new URLSearchParams(window.location.search);
@@ -1637,10 +1632,11 @@ export default function MineralFormulaParser({ initialName, initialFormula, init
   const [apiError, setApiError] = useState(null);
   // Which summary column ("(1)"/"(2)") — if any — has been opened into its
   // full detail, for the single-formula box's result (shared by both the
-  // typed formula and any mineral picked from the batch list below). Starts
-  // open when "Custom Formula" was clicked from a detail view, which hands
-  // over that one column's formula, so it's always column 0 here.
-  const [topOpenColumnIndex, setTopOpenColumnIndex] = useState(initialOpenDetail ? 0 : null);
+  // typed formula and any mineral picked from the batch list below). Custom
+  // Formula always starts on the full detail (with valences), since that's
+  // what building a formula needs; "Back to summary" still shows the
+  // summary table.
+  const [topOpenColumnIndex, setTopOpenColumnIndex] = useState(0);
 
   const result = useMemo(() => {
     try {
@@ -1806,9 +1802,9 @@ export default function MineralFormulaParser({ initialName, initialFormula, init
     if (r.error) return;
     setNameInput(r.name);
     setFormulaInput(r.formulaStr);
-    // A different mineral lands back on the summary; editing the formula
-    // in place leaves the detail view open until "Back to summary".
-    setTopOpenColumnIndex(null);
+    // A different mineral opens on its first column's full detail, the same
+    // as Custom Formula itself.
+    setTopOpenColumnIndex(0);
   }, []);
 
   function handleBatchSearchChange(e) {
