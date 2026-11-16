@@ -65,7 +65,7 @@ export function formatDetailText(result) {
       o.count.toFixed(3),
       o.weight.toFixed(3),
       o.totalMass.toFixed(3),
-      o.percent.toFixed(3),
+      o.displayPercent.toFixed(3),
     ]);
     const oxTotal = ["Total", "", "", result.totalMass.toFixed(3), "100.000"];
     const oxWidths = oxHeaders.map((h, col) =>

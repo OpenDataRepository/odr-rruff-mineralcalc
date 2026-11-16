@@ -177,7 +177,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
         label: renderFormula(formula),
         values: oxideColumns.map((col) => {
           const o = col?.find((x) => `${x.symbol}|${x.valence}` === key);
-          return o ? o.percent : null;
+          return o ? o.displayPercent : null;
         }),
       }))
     : elements.map((symbol) => ({
@@ -195,6 +195,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
   // for them, so it's hidden and only atomic weight percents are shown. See
   // isMetallicFormula in MineralFormulaParser.jsx.
   const isMetallic = rows.every((r) => r.result.isMetallic);
+  const hideNetCharge = isMetallic || showOxides;
 
   if (rows.length === 0) {
     return (
@@ -349,7 +350,9 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
               ))}
             </tbody>
             <tfoot>
-              {!isMetallic && (
+              {/* No net charge row on the Oxides tab: oxides only exist for a
+                  formula whose net charge is zero, so it would always read 0. */}
+              {!hideNetCharge && (
                 <tr>
                   <td
                     style={{
@@ -385,7 +388,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                   style={{
                     ...summaryTdStyle,
                     fontWeight: 700,
-                    borderTop: isMetallic ? `2.5px solid ${COLORS.textDim}` : "none",
+                    borderTop: hideNetCharge ? `2.5px solid ${COLORS.textDim}` : "none",
                     borderBottom: "none",
                     position: "sticky",
                     left: 0,
@@ -414,7 +417,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                     style={{
                       ...summaryTdStyle,
                       fontWeight: 700,
-                      borderTop: isMetallic ? `2.5px solid ${COLORS.textDim}` : "none",
+                      borderTop: hideNetCharge ? `2.5px solid ${COLORS.textDim}` : "none",
                       borderBottom: "none",
                     }}
                   >

@@ -3,7 +3,7 @@ import { loadMineralsFromFile, loadMineralsFromApi } from "./mineralDataSources.
 import { COLORS, tdStyle, renderFormula, renderMineralName, backButtonStyle, displayFormulaStr } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
-import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
+import { toFormattedFormula } from "./odrChemistryFormat.js";
 import { ELEMENTS, REE_ELEMENTS } from "./elements.js";
 
 // A subscript containing a letter is one of two very different things:
@@ -201,7 +201,9 @@ function addCount(a, b) {
 //                bracket must match the type it opened with, e.g. '[' ... ')'
 //                throws a mismatched-bracket error. A Valence directly after
 //                the closing bracket (e.g. '(AsS)^3-^') states the charge of
-//                the whole enclosed complex ion, not any one atom in it — it
+//                the whole enclosed complex ion, not any one atom in it. When
+//                the atoms' ordinary valences add up to it (H3O+ = 3×H+1 +
+//                O-2) those are used (see naturalGroupValences); otherwise it
 //                is split across the group's atoms in proportion to their
 //                own counts, so summing count*valence over the group still
 //                totals exactly the stated group charge (see the bracket
@@ -358,10 +360,12 @@ function parseFormula(str) {
         const groupValence = readValence();
         const count = readCount();
         if (groupValence !== null) {
+          const natural = naturalGroupValences(sub, groupValence);
           const totalInner = sub.reduce((s, a) => s + repCount(a.count), 0);
           const perUnitValence = totalInner ? groupValence / totalInner : 0;
           for (const a of sub) {
-            atoms.push({ ...a, explicitValence: perUnitValence, count: mulCount(a.count, count) });
+            const explicitValence = natural ? natural.get(a.symbol) : perUnitValence;
+            atoms.push({ ...a, explicitValence, count: mulCount(a.count, count) });
           }
         } else {
           for (const a of sub) atoms.push({ ...a, count: mulCount(a.count, count) });
@@ -486,6 +490,49 @@ function substituteRanges(str, rangeSpans, which) {
   }
   out += str.slice(last);
   return out;
+}
+
+// A complex ion's stated charge (e.g. the 1+ of '(H_3_O)^1+^') as the
+// ordinary valences of its own atoms, when they add up to it: H3O+ is
+// H +1 and O -2 (3 - 2 = +1), NH4+ is N -3 and H +1. Each atom keeps a valence
+// written on it; otherwise every valence its element can take is tried, one
+// per symbol, most common first. Returns symbol -> valence, or null when no
+// combination adds up exactly, or more than one element has a choice of
+// valence (e.g. '(AsS)^2-^') — and the caller falls back
+// to spreading the charge evenly. Without this an evenly spread +1 gave H3O's
+// O a valence of +0.25, so it was counted as a cation.
+function naturalGroupValences(sub, groupValence) {
+  const groups = [];
+  const bySymbol = new Map();
+  for (const a of sub) {
+    let g = bySymbol.get(a.symbol);
+    if (!g) {
+      const given = a.explicitValence !== null && a.explicitValence !== undefined ? [a.explicitValence] : null;
+      const candidates = given || ELEMENTS[a.symbol]?.valences;
+      if (!candidates || !candidates.length) return null;
+      g = { symbol: a.symbol, count: 0, candidates };
+      bySymbol.set(a.symbol, g);
+      groups.push(g);
+    } else if (a.explicitValence !== null && a.explicitValence !== undefined) {
+      if (!g.candidates.includes(a.explicitValence)) return null;
+      g.candidates = [a.explicitValence];
+    }
+    g.count += repCount(a.count);
+  }
+  // Only one element may be left to solve for. With two (e.g. As and S in
+  // '(AsS)^2-^', really As-1 S-1) a sum can be hit by a chemically wrong
+  // pair like As-3 S+1, so those keep the even split.
+  if (groups.filter((g) => g.candidates.length > 1).length > 1) return null;
+  const choice = new Array(groups.length);
+  const found = (function search(idx, charge) {
+    if (idx === groups.length) return Math.abs(charge - groupValence) < 1e-6;
+    for (const v of groups[idx].candidates) {
+      choice[idx] = v;
+      if (search(idx + 1, charge + v * groups[idx].count)) return true;
+    }
+    return false;
+  })(0, 0);
+  return found ? new Map(groups.map((g, i) => [g.symbol, choice[i]])) : null;
 }
 
 function resolveAtom(atom) {
@@ -1611,7 +1658,15 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
     const params = new URLSearchParams(window.location.search);
     return params.get("formula") || EXAMPLES[0].split("\t")[1];
   });
-  const input = `${nameInput}\t${formulaInput}`;
+  // The box takes a plain formula (e.g. "Fe2+2SiO4", copied straight out of
+  // a paper) as well as this app's _subscript_ / ^superscript^ syntax: a
+  // plain one is converted on every keystroke and analyzed in that form, and
+  // the formatted heading under the box shows how it was read. While typing,
+  // the box keeps exactly what was typed — rewriting it mid-word would move
+  // the cursor and turn a half-typed "Fe2" into "Fe_2_" before the "+"
+  // arrives — and it's rewritten to the formatted form on blur instead.
+  const formattedFormula = useMemo(() => toFormattedFormula(formulaInput), [formulaInput]);
+  const input = `${nameInput}\t${formattedFormula}`;
   const [error, setError] = useState(null);
   const [batchRows, setBatchRows] = useState(null); // [{name, formulaStr}] from the active data source
   const [batchFileName, setBatchFileName] = useState("");
@@ -1669,22 +1724,8 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   );
   const formulaBackdropRef = useRef(null);
 
-  // Lets users paste a "plain" formula (e.g. "Ni2+C31H32N4", copied straight
-  // out of a paper) and have it converted into this app's "_2_" / "^2+^"
-  // syntax instead of typing the delimiters by hand. Ported from ODR's own
-  // chemistry-formatting plugin — see odrChemistryFormat.js. Refuses to run
-  // on a formula that already looks formatted, since the converter assumes
-  // plain input and mangles anything that already has delimiters in it.
+  // A problem from the Scale formula button (e.g. a bad factor).
   const [plainFormulaNotice, setPlainFormulaNotice] = useState(null);
-  const convertPlainFormula = useCallback(() => {
-    if (!formulaInput.trim()) return;
-    if (isFormulaFormatted(formulaInput)) {
-      setPlainFormulaNotice("Formula already looks formatted — nothing to convert.");
-      return;
-    }
-    setFormulaInput(parseChemicalFormula(formulaInput));
-    setPlainFormulaNotice(null);
-  }, [formulaInput]);
 
   // Rewrites the formula at another scale (see scaleFormulaStr), e.g. ×2 to
   // match a paper that uses twice the formula unit. "1/2" or 0.5 halves it.
@@ -1698,14 +1739,16 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   const applyScale = useCallback(() => {
     const factor = parseNum(scaleInput.trim());
     try {
-      const scaled = scaleFormulaStr(formulaInput, factor);
+      // Scaled from the converted form, since scaleFormulaStr only reads
+      // _count_ syntax; the box then holds the formatted, scaled formula.
+      const scaled = scaleFormulaStr(formattedFormula, factor);
       setScaleOrigin({ original: canResetScale ? scaleOrigin.original : formulaInput, scaled });
       setFormulaInput(scaled);
       setPlainFormulaNotice(null);
     } catch (e) {
       setPlainFormulaNotice(e.message);
     }
-  }, [formulaInput, scaleInput, canResetScale, scaleOrigin]);
+  }, [formulaInput, formattedFormula, scaleInput, canResetScale, scaleOrigin]);
   const resetScale = useCallback(() => {
     if (!canResetScale) return;
     setFormulaInput(scaleOrigin.original);
@@ -1732,18 +1775,22 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
       // Lowercased once here rather than on every keystroke's filter pass —
       // with a several-thousand-row list, redoing toLowerCase() on every
       // row for every character typed was the main source of filter lag.
-      const searchText = `${row.name} ${row.formulaStr}`.toLowerCase();
+      // A plain formula in the file is converted the same way as one typed
+      // into the box (see formattedFormula), so files don't have to use this
+      // app's _subscript_ / ^superscript^ syntax. Search matches either form.
+      const formulaStr = toFormattedFormula(row.formulaStr);
+      const searchText = `${row.name} ${row.formulaStr} ${formulaStr}`.toLowerCase();
       try {
         return {
           id,
           name: row.name,
-          formulaStr: row.formulaStr,
-          result: analyze(`${row.name}\t${row.formulaStr}`),
+          formulaStr,
+          result: analyze(`${row.name}\t${formulaStr}`),
           error: null,
           searchText,
         };
       } catch (e) {
-        return { id, name: row.name, formulaStr: row.formulaStr, result: null, error: e.message, searchText };
+        return { id, name: row.name, formulaStr, result: null, error: e.message, searchText };
       }
     });
   }, [batchRows]);
@@ -1932,7 +1979,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
             <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
-              Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
+              Formula: plain, eg Fe2+2SiO4, or with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
             </label>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
               <span
@@ -1967,14 +2014,6 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                   Reset
                 </button>
               )}
-              <button
-                type="button"
-                onClick={convertPlainFormula}
-                title="Converts a plain formula (e.g. Ni2+C31H32N4) into this app's _subscript_ / ^superscript^ syntax"
-                style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
-              >
-                Convert plain formula
-              </button>
             </div>
           </div>
           {plainFormulaNotice && (
@@ -2015,7 +2054,13 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                 setPlainFormulaNotice(null);
               }}
               onFocus={() => setFormulaFocused(true)}
-              onBlur={() => setFormulaFocused(false)}
+              onBlur={() => {
+                setFormulaFocused(false);
+                // Once the user clicks away, the plain formula is safe to
+                // rewrite in place (no cursor to move, nothing half-typed),
+                // so the box shows the _ / ^ syntax it was read as.
+                if (formattedFormula !== formulaInput) setFormulaInput(formattedFormula);
+              }}
               onScroll={(e) => {
                 if (formulaBackdropRef.current) {
                   formulaBackdropRef.current.scrollTop = e.target.scrollTop;
@@ -2048,7 +2093,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
 
         {error && (
           <div style={{ marginTop: 18 }}>
-            <FormulaHeader title={nameInput} formulaStr={formulaInput} />
+            <FormulaHeader title={nameInput} formulaStr={formattedFormula} />
             <div
               style={{
                 padding: "12px 14px",
@@ -2100,8 +2145,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
           }}
         >
           <p style={{ color: COLORS.textDim, fontSize: 13, margin: "0 0 10px" }}>
-            Upload an excel or CSV file with a list of minerals{" "}
-            <span style={{ color: COLORS.warn }}>AND THEIR CHEMICAL FORMULAS IN THE FORMAT ABOVE</span> to check them all at once.
+            Upload an excel or CSV file with a list of minerals and their chemical formulas, plain or formatted, to check them all at once.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <label
