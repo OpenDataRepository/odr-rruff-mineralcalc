@@ -170,7 +170,8 @@ export default function LandingPage({ onEdit }) {
   const displayedRows = showMatchingWeights ? rows : collapsedRows;
   // The checkbox is only shown when it changes something: when unchecking
   // it would actually hide a column.
-  const hasMatchingColumns = collapsedRows.length < rows.length;
+  const hiddenCount = rows.length - collapsedRows.length;
+  const hasMatchingColumns = hiddenCount > 0;
 
   const [openColumnIndex, setOpenColumnIndex] = useState(null);
 
@@ -312,6 +313,7 @@ export default function LandingPage({ onEdit }) {
                   gap: 6,
                   cursor: "pointer",
                 }}
+                title="Datasets whose weight percents are the same as a dataset already in the table"
               >
                 <input
                   type="checkbox"
@@ -321,7 +323,9 @@ export default function LandingPage({ onEdit }) {
                     setOpenColumnIndex(null);
                   }}
                 />
-                Show formulas with matching weights
+                {/* The count says how many columns the box adds or removes,
+                    so it's clear datasets really were left out. */}
+                Show {hiddenCount} duplicate dataset{hiddenCount === 1 ? "" : "s"}
               </label>
             )}
             </div>

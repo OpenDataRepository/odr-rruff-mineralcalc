@@ -240,7 +240,7 @@ export function citationScaleFactor(citationAtoms, idealAtoms) {
 // mineralDataSources.js's row-level error handling for the same pattern at
 // batch scale. Every citation that parses is returned, duplicates included —
 // LandingPage collapses duplicates (see dedupeCitationRows) only when
-// "Show formulas with matching weights" is off.
+// "Show N duplicate datasets" is off.
 //
 // idealRows (buildIdealRows' output) bound each element's valence to the
 // range the ideal formula gives it, so e.g. a bare "Fe" in a citation is
