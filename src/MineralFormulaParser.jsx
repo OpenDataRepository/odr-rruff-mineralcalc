@@ -3,7 +3,7 @@ import { loadMineralsFromFile, loadMineralsFromApi } from "./mineralDataSources.
 import { COLORS, tdStyle, renderFormula, renderMineralName, backButtonStyle, displayFormulaStr } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
-import { parseChemicalFormula, isFormulaFormatted } from "./odrChemistryFormat.js";
+import { toFormattedFormula } from "./odrChemistryFormat.js";
 import { ELEMENTS, REE_ELEMENTS } from "./elements.js";
 
 // A subscript containing a letter is one of two very different things:
@@ -1611,7 +1611,15 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
     const params = new URLSearchParams(window.location.search);
     return params.get("formula") || EXAMPLES[0].split("\t")[1];
   });
-  const input = `${nameInput}\t${formulaInput}`;
+  // The box takes a plain formula (e.g. "Fe2+2SiO4", copied straight out of
+  // a paper) as well as this app's _subscript_ / ^superscript^ syntax: a
+  // plain one is converted on every keystroke and analyzed in that form, and
+  // the formatted heading under the box shows how it was read. While typing,
+  // the box keeps exactly what was typed — rewriting it mid-word would move
+  // the cursor and turn a half-typed "Fe2" into "Fe_2_" before the "+"
+  // arrives — and it's rewritten to the formatted form on blur instead.
+  const formattedFormula = useMemo(() => toFormattedFormula(formulaInput), [formulaInput]);
+  const input = `${nameInput}\t${formattedFormula}`;
   const [error, setError] = useState(null);
   const [batchRows, setBatchRows] = useState(null); // [{name, formulaStr}] from the active data source
   const [batchFileName, setBatchFileName] = useState("");
@@ -1669,22 +1677,8 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   );
   const formulaBackdropRef = useRef(null);
 
-  // Lets users paste a "plain" formula (e.g. "Ni2+C31H32N4", copied straight
-  // out of a paper) and have it converted into this app's "_2_" / "^2+^"
-  // syntax instead of typing the delimiters by hand. Ported from ODR's own
-  // chemistry-formatting plugin — see odrChemistryFormat.js. Refuses to run
-  // on a formula that already looks formatted, since the converter assumes
-  // plain input and mangles anything that already has delimiters in it.
+  // A problem from the Scale formula button (e.g. a bad factor).
   const [plainFormulaNotice, setPlainFormulaNotice] = useState(null);
-  const convertPlainFormula = useCallback(() => {
-    if (!formulaInput.trim()) return;
-    if (isFormulaFormatted(formulaInput)) {
-      setPlainFormulaNotice("Formula already looks formatted — nothing to convert.");
-      return;
-    }
-    setFormulaInput(parseChemicalFormula(formulaInput));
-    setPlainFormulaNotice(null);
-  }, [formulaInput]);
 
   // Rewrites the formula at another scale (see scaleFormulaStr), e.g. ×2 to
   // match a paper that uses twice the formula unit. "1/2" or 0.5 halves it.
@@ -1698,14 +1692,16 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   const applyScale = useCallback(() => {
     const factor = parseNum(scaleInput.trim());
     try {
-      const scaled = scaleFormulaStr(formulaInput, factor);
+      // Scaled from the converted form, since scaleFormulaStr only reads
+      // _count_ syntax; the box then holds the formatted, scaled formula.
+      const scaled = scaleFormulaStr(formattedFormula, factor);
       setScaleOrigin({ original: canResetScale ? scaleOrigin.original : formulaInput, scaled });
       setFormulaInput(scaled);
       setPlainFormulaNotice(null);
     } catch (e) {
       setPlainFormulaNotice(e.message);
     }
-  }, [formulaInput, scaleInput, canResetScale, scaleOrigin]);
+  }, [formulaInput, formattedFormula, scaleInput, canResetScale, scaleOrigin]);
   const resetScale = useCallback(() => {
     if (!canResetScale) return;
     setFormulaInput(scaleOrigin.original);
@@ -1732,18 +1728,22 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
       // Lowercased once here rather than on every keystroke's filter pass —
       // with a several-thousand-row list, redoing toLowerCase() on every
       // row for every character typed was the main source of filter lag.
-      const searchText = `${row.name} ${row.formulaStr}`.toLowerCase();
+      // A plain formula in the file is converted the same way as one typed
+      // into the box (see formattedFormula), so files don't have to use this
+      // app's _subscript_ / ^superscript^ syntax. Search matches either form.
+      const formulaStr = toFormattedFormula(row.formulaStr);
+      const searchText = `${row.name} ${row.formulaStr} ${formulaStr}`.toLowerCase();
       try {
         return {
           id,
           name: row.name,
-          formulaStr: row.formulaStr,
-          result: analyze(`${row.name}\t${row.formulaStr}`),
+          formulaStr,
+          result: analyze(`${row.name}\t${formulaStr}`),
           error: null,
           searchText,
         };
       } catch (e) {
-        return { id, name: row.name, formulaStr: row.formulaStr, result: null, error: e.message, searchText };
+        return { id, name: row.name, formulaStr, result: null, error: e.message, searchText };
       }
     });
   }, [batchRows]);
@@ -1932,7 +1932,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
             <label style={{ color: COLORS.textDim, fontSize: 12, fontWeight: 600 }}>
-              Formatted formula: with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
+              Formula: plain, eg Fe2+2SiO4, or with subscripts inside of pairs of underscores, eg _2_, and superscripts inside of a pair of carets, eg ^2+^
             </label>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
               <span
@@ -1967,14 +1967,6 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                   Reset
                 </button>
               )}
-              <button
-                type="button"
-                onClick={convertPlainFormula}
-                title="Converts a plain formula (e.g. Ni2+C31H32N4) into this app's _subscript_ / ^superscript^ syntax"
-                style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
-              >
-                Convert plain formula
-              </button>
             </div>
           </div>
           {plainFormulaNotice && (
@@ -2015,7 +2007,13 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                 setPlainFormulaNotice(null);
               }}
               onFocus={() => setFormulaFocused(true)}
-              onBlur={() => setFormulaFocused(false)}
+              onBlur={() => {
+                setFormulaFocused(false);
+                // Once the user clicks away, the plain formula is safe to
+                // rewrite in place (no cursor to move, nothing half-typed),
+                // so the box shows the _ / ^ syntax it was read as.
+                if (formattedFormula !== formulaInput) setFormulaInput(formattedFormula);
+              }}
               onScroll={(e) => {
                 if (formulaBackdropRef.current) {
                   formulaBackdropRef.current.scrollTop = e.target.scrollTop;
@@ -2048,7 +2046,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
 
         {error && (
           <div style={{ marginTop: 18 }}>
-            <FormulaHeader title={nameInput} formulaStr={formulaInput} />
+            <FormulaHeader title={nameInput} formulaStr={formattedFormula} />
             <div
               style={{
                 padding: "12px 14px",
@@ -2100,8 +2098,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
           }}
         >
           <p style={{ color: COLORS.textDim, fontSize: 13, margin: "0 0 10px" }}>
-            Upload an excel or CSV file with a list of minerals{" "}
-            <span style={{ color: COLORS.warn }}>AND THEIR CHEMICAL FORMULAS IN THE FORMAT ABOVE</span> to check them all at once.
+            Upload an excel or CSV file with a list of minerals and their chemical formulas, plain or formatted, to check them all at once.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <label

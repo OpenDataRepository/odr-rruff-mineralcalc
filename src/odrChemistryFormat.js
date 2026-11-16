@@ -232,6 +232,19 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
 }
 
 /**
+ * The formula in this app's _subscript_ / ^superscript^ syntax: converted if
+ * it's plain (e.g. "Fe2+2SiO4" -> "Fe^2+^_2_SiO_4_") or only partly
+ * formatted, and returned as is if it's already formatted.
+ *
+ * @param {string} formula
+ * @returns {string}
+ */
+export function toFormattedFormula(formula) {
+  if (!formula || !formula.trim()) return formula;
+  return isFormulaFormatted(formula) ? formula : parseChemicalFormula(formula);
+}
+
+/**
  * Returns false if the value does not appear to be a "formatted" chemical formula...i.e. it has
  * a number, but no format characters.
  *
