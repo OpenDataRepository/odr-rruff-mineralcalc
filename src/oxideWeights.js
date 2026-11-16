@@ -51,6 +51,7 @@ export function computeOxides(result) {
         valence: a.valence,
         formula: oxideFormula(a.symbol, a.valence),
         metalCount,
+        cationWeight: a.weight,
         weight: metalCount * a.weight + oxygenCount * oWeight,
         count: 0,
       };
@@ -64,9 +65,23 @@ export function computeOxides(result) {
   // Charge balance with O^2- as the only anion means the oxides use exactly
   // the formula's O, so their summed mass is the same formula mass and the
   // percents are taken against it, just like the atomic weight percents.
-  return oxides.map((o) => ({
+  const rows = oxides.map((o) => ({
     ...o,
     totalMass: o.count * o.weight,
     percent: (o.count * o.weight * 100) / result.totalMass,
   }));
+
+  // Shown percents are rounded (not truncated) to 3 decimals, which can leave
+  // their sum a few thousandths off 100.000. Per Bob Downs, that leftover goes
+  // to the oxide of the lightest cation: light atoms have the fewest electrons,
+  // so theirs is the least accurately measured value; heavy atoms are the
+  // easiest. Worked in integer thousandths so float error can't creep back in.
+  const thousandths = rows.map((o) => Math.round(o.percent * 1000));
+  const leftover = 100000 - thousandths.reduce((s, n) => s + n, 0);
+  let lightest = 0;
+  rows.forEach((o, i) => {
+    if (o.cationWeight < rows[lightest].cationWeight) lightest = i;
+  });
+  thousandths[lightest] += leftover;
+  return rows.map((o, i) => ({ ...o, displayPercent: thousandths[i] / 1000 }));
 }

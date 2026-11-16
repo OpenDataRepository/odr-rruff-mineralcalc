@@ -183,7 +183,7 @@ function OxideTable({ oxides, totalMass }) {
               <td style={detailTdStyle}>{o.count.toFixed(3)}</td>
               <td style={detailTdStyle}>{o.weight.toFixed(3)}</td>
               <td style={detailTdStyle}>{o.totalMass.toFixed(3)}</td>
-              <td style={{ ...detailTdStyle, color: COLORS.accent }}>{o.percent.toFixed(3)}</td>
+              <td style={{ ...detailTdStyle, color: COLORS.accent }}>{o.displayPercent.toFixed(3)}</td>
             </tr>
           ))}
         </tbody>
@@ -278,7 +278,8 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
         <Stat label="Formula mass" value={`${result.totalMass.toFixed(3)} g/mol`} />
-        {showValence && (
+        {/* Oxides only exist for a zero net charge, so it's left off their tab. */}
+        {showValence && !showOxides && (
           <Stat
             label="Net charge"
             value={result.netCharge.toFixed(3)}
