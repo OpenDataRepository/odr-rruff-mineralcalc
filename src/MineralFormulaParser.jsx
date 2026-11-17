@@ -1664,7 +1664,8 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   // the formatted heading under the box shows how it was read. While typing,
   // the box keeps exactly what was typed — rewriting it mid-word would move
   // the cursor and turn a half-typed "Fe2" into "Fe_2_" before the "+"
-  // arrives — and it's rewritten to the formatted form on blur instead.
+  // arrives — so it's only rewritten when the Format formula button is
+  // clicked (see formatFormula).
   const formattedFormula = useMemo(() => toFormattedFormula(formulaInput), [formulaInput]);
   const input = `${nameInput}\t${formattedFormula}`;
   const [error, setError] = useState(null);
@@ -1724,7 +1725,8 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   );
   const formulaBackdropRef = useRef(null);
 
-  // A problem from the Scale formula button (e.g. a bad factor).
+  // A problem from the Scale formula or Format formula button (e.g. a bad
+  // factor).
   const [plainFormulaNotice, setPlainFormulaNotice] = useState(null);
 
   // Rewrites the formula at another scale (see scaleFormulaStr), e.g. ×2 to
@@ -1855,6 +1857,16 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   }, []);
 
   function handleBatchSearchChange(e) {
+  // Rewrites a plain formula in the box in the _ / ^ syntax it was read as.
+  const formatFormula = useCallback(() => {
+    if (!formulaInput.trim()) return;
+    if (formattedFormula === formulaInput) {
+      setPlainFormulaNotice("Formula is already formatted.");
+      return;
+    }
+    setFormulaInput(formattedFormula);
+    setPlainFormulaNotice(null);
+  }, [formulaInput, formattedFormula]);
     setBatchSearch(e.target.value);
   }
 
@@ -2054,13 +2066,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                 setPlainFormulaNotice(null);
               }}
               onFocus={() => setFormulaFocused(true)}
-              onBlur={() => {
-                setFormulaFocused(false);
-                // Once the user clicks away, the plain formula is safe to
-                // rewrite in place (no cursor to move, nothing half-typed),
-                // so the box shows the _ / ^ syntax it was read as.
-                if (formattedFormula !== formulaInput) setFormulaInput(formattedFormula);
-              }}
+              onBlur={() => setFormulaFocused(false)}
               onScroll={(e) => {
                 if (formulaBackdropRef.current) {
                   formulaBackdropRef.current.scrollTop = e.target.scrollTop;
@@ -2143,6 +2149,14 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
             border: `1px solid ${COLORS.border}`,
             background: COLORS.panel,
           }}
+              <button
+                type="button"
+                onClick={formatFormula}
+                title="Rewrites a plain formula (e.g. Fe2+2SiO4) in this app's _subscript_ / ^superscript^ syntax"
+                style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
+              >
+                Format formula
+              </button>
         >
           <p style={{ color: COLORS.textDim, fontSize: 13, margin: "0 0 10px" }}>
             Upload an excel or CSV file with a list of minerals and their chemical formulas, plain or formatted, to check them all at once.
