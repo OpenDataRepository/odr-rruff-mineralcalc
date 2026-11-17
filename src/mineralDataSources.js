@@ -180,7 +180,15 @@ function amcsdCitationOf(record, idealFormulaStr, divisor) {
     cell: cellOf(record),
     // AMC line 3 is the journal.
     citation: (amcLines[2] || getRecordField(record, "Authors") || "").trim(),
+    // The AMCSD code (e.g. "0014553"), shown after the citation.
+    amcsdId:
+      getRecordField(record, "database_code_amcsd")?.trim() ||
+      amcLines.map((l) => /^_database_code_amcsd\s+(\S+)/.exec(l.trim())?.[1]).find(Boolean) ||
+      null,
     amcValences: amcValences.labelled?.length ? amcValences : null,
+    // A divisor picked on the page is kept as is, not rescaled to the ideal
+    // formula's size (see buildEmpiricalRows).
+    keepScale: divisor > 0 && !amcValences.error,
     // Only when the formula came from the AMC file (not the Chemistry field).
     amcScale: amcValences.error
       ? null

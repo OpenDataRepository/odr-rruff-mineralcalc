@@ -5,6 +5,7 @@ import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { formatDetailText, downloadTxt } from "./reportText.js";
 import { toFormattedFormula } from "./odrChemistryFormat.js";
 import { ELEMENTS, REE_ELEMENTS } from "./elements.js";
+import { solveSiteFill } from "./siteFill.js";
 
 // A subscript containing a letter is one of two very different things:
 //   Type 1 — a clean numeric range, e.g. '_4.5-2.5_': the dash just
@@ -1141,9 +1142,137 @@ function collapseMultipleCommaGroupsToLeftmost(formulaStr, groups, valenceBounds
     if (balanced !== null) return balanced.formulaStr;
   }
 
+  // More than one mixed-valence site: fill them all at once (see
+  // fillCommaSites), closest to the cited analyses' average when there is one.
+  const filled = fillCommaSites(formulaStr, groups, valenceBounds, options?.siteAverage);
+  if (filled) return filled;
+
   throw new Error(
     "Our automated routine does not know how to interpret this formula because of the commas."
   );
+}
+
+// Every comma site filled with charge-balanced amounts as close as possible
+// to a target (see solveSiteFill), e.g. Vesuvianite's
+// '(Ca,Na)_19_(Al,Mg,Fe^3+^)_13_(SiO_4_)_10_(Si_2_O_7_)_4_(OH,F,O)_10_' ->
+// '(Ca_19_)(Al_10_Mg_3_)...((OH)_10_)' when the target is each site's first
+// occupant. siteAverage ({ symbol: count }, the average of the mineral's
+// cited analyses at the ideal formula's size) sets the target instead, when
+// it has any of a site's occupants. Each site needs its own bracket with a
+// count after it ('(Ca,Na)_19_'; no count means 1). Returns the filled
+// formula, or null when it can't be filled.
+function fillCommaSites(formulaStr, groups, valenceBounds, siteAverage) {
+  const sorted = [...groups].sort((a, b) => a.start - b.start);
+  const sites = [];
+  for (const g of sorted) {
+    const open = g.start - 1;
+    if (open < 0 || !"([{".includes(formulaStr[open]) || !")]}".includes(formulaStr[g.end])) return null;
+    const countMatch = /^_(\d+(?:\.\d+)?)_/.exec(formulaStr.slice(g.end + 1));
+    let tokens;
+    try {
+      tokens = parseCommaTokens(formulaStr.slice(g.start, g.end));
+    } catch {
+      return null;
+    }
+    const occupants = tokens.map((t) => {
+      // An element with no written valence takes its usual one, written out
+      // so the filled formula is read the same way.
+      const v = t.isComplex ? t.valenceSet[0] : t.valenceSet?.[0];
+      const pin = !t.isComplex && ELEMENTS[t.symbol]?.valences.length > 1 && !t.raw.includes("^");
+      return { ...t, valence: v, raw: pin ? `${t.symbol}^${Math.abs(v)}${v < 0 ? "-" : "+"}^` : t.raw };
+    });
+    if (occupants.some((o) => typeof o.valence !== "number")) return null;
+    sites.push({
+      spanStart: open,
+      spanEnd: g.end + 1 + (countMatch ? countMatch[0].length : 0),
+      count: countMatch ? parseFloat(countMatch[1]) : 1,
+      occupants,
+    });
+  }
+
+  // The rest of the formula, its charge and atoms.
+  let fixed = formulaStr;
+  for (const site of [...sites].reverse()) fixed = fixed.slice(0, site.spanStart) + fixed.slice(site.spanEnd);
+  let fixedCharge = 0;
+  const fixedAtoms = {};
+  try {
+    if (fixed.trim()) {
+      fixedCharge = netChargeOfFragment(fixed, valenceBounds);
+      for (const a of parseFormula(fixed).atoms.map(resolveAtom)) {
+        fixedAtoms[a.symbol] = (fixedAtoms[a.symbol] || 0) + repCount(a.count);
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  const targets = siteTargets(sites, fixedAtoms, siteAverage);
+  const fill = solveSiteFill(
+    sites.map((site) => ({ count: site.count, valences: site.occupants.map((o) => o.valence) })),
+    targets,
+    -fixedCharge
+  );
+  if (!fill) return null;
+
+  let result = formulaStr;
+  sites.forEach((site, s) => (site.amounts = fill[s]));
+  // A multi-atom occupant gets brackets so its count covers all of it
+  // (unless it's already bracketed, like '[box]'); a count of 1 is left off;
+  // a site left with one occupant loses its own brackets ('(Mn^2+^_1_)' ->
+  // 'Mn^2+^').
+  const written = (o, amount) => {
+    const raw = o.isComplex && !/^[([{].*[)\]}]$/.test(o.raw) ? `(${o.raw})` : o.raw;
+    return amount === 1 ? raw : `${raw}_${formatSplitNum(amount)}_`;
+  };
+  for (const site of [...sites].reverse()) {
+    const parts = site.occupants.map((o, k) => [o, site.amounts[k]]).filter(([, amount]) => amount > 0);
+    const text = parts.length === 1 ? written(...parts[0]) : `(${parts.map((p) => written(...p)).join("")})`;
+    result = result.slice(0, site.spanStart) + text + result.slice(site.spanEnd);
+  }
+  try {
+    if (Math.abs(netChargeOfFragment(result, valenceBounds)) > 1e-6) return null;
+  } catch {
+    return null;
+  }
+  return result;
+}
+
+// Each site's target amounts for fillCommaSites: from siteAverage when it
+// has any of the site's occupants, scaled to the site's count, otherwise
+// the whole site on its first occupant. An element's average is what's
+// left after the rest of the formula's share (O in (SiO_4_) isn't on an
+// anion site) and a multi-atom occupant's share (the O of OH). A multi-atom
+// occupant's own amount is read from an atom only it has (the H of OH).
+function siteTargets(sites, fixedAtoms, siteAverage) {
+  const leftmost = sites.map((site) => site.occupants.map((_, k) => (k === 0 ? site.count : 0)));
+  if (!siteAverage) return leftmost;
+  const bare = new Set(sites.flatMap((site) => site.occupants.filter((o) => !o.isComplex).map((o) => o.symbol)));
+  const used = {};
+  const raw = sites.map((site) =>
+    site.occupants.map((o) => {
+      if (!o.isComplex) return null;
+      let atoms;
+      try {
+        atoms = parseFormula(o.raw).atoms.map(resolveAtom);
+      } catch {
+        return 0;
+      }
+      const key = atoms.find((a) => !bare.has(a.symbol) && !fixedAtoms[a.symbol]);
+      if (!key) return 0;
+      const amount = Math.max(0, (siteAverage[key.symbol] || 0) / repCount(key.count));
+      for (const a of atoms) used[a.symbol] = (used[a.symbol] || 0) + amount * repCount(a.count);
+      return amount;
+    })
+  );
+  return sites.map((site, s) => {
+    const amounts = site.occupants.map((o, k) =>
+      o.isComplex
+        ? raw[s][k]
+        : Math.max(0, (siteAverage[o.symbol] || 0) - (fixedAtoms[o.symbol] || 0) - (used[o.symbol] || 0))
+    );
+    const total = amounts.reduce((t, v) => t + v, 0);
+    return total > 0 ? amounts.map((v) => (v * site.count) / total) : leftmost[s];
+  });
 }
 
 // Every comma group replaced by its first occupant, same-valence or not.
@@ -1485,7 +1614,7 @@ export function scaleFormulaStr(str, factor) {
 
 // valenceBounds (optional, see valenceBoundsOf) limits which valence an
 // element without an explicit '^n+^' can be resolved to.
-export function analyze(rawInput, { valenceBounds } = {}) {
+export function analyze(rawInput, { valenceBounds, siteAverage } = {}) {
   // Allow "Name<TAB>Formula" pasted straight from the source list.
   const parts = rawInput.split("\t");
   const name = parts.length > 1 ? parts[0].trim() : "";
@@ -1506,7 +1635,7 @@ export function analyze(rawInput, { valenceBounds } = {}) {
   // comma group instead collapses to a single leftmost-element-per-group
   // "modified ideal formula" — isModifiedIdeal flags that for the UI.
   const { formulaStr: reeDroppedStr, changed: droppedRee } = dropOptionalRee(formulaStr);
-  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(reeDroppedStr, valenceBounds);
+  const { formulaStr: expandedFormulaStr, isModifiedIdeal } = expandCommaGroup(reeDroppedStr, valenceBounds, { siteAverage });
   const result = analyzeOne(expandedFormulaStr, valenceBounds);
 
   // A shared site is split once for the whole range, which can leave both
@@ -1664,7 +1793,8 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   // the formatted heading under the box shows how it was read. While typing,
   // the box keeps exactly what was typed — rewriting it mid-word would move
   // the cursor and turn a half-typed "Fe2" into "Fe_2_" before the "+"
-  // arrives — and it's rewritten to the formatted form on blur instead.
+  // arrives — so it's only rewritten when the Format formula button is
+  // clicked (see formatFormula).
   const formattedFormula = useMemo(() => toFormattedFormula(formulaInput), [formulaInput]);
   const input = `${nameInput}\t${formattedFormula}`;
   const [error, setError] = useState(null);
@@ -1724,8 +1854,19 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
   );
   const formulaBackdropRef = useRef(null);
 
-  // A problem from the Scale formula button (e.g. a bad factor).
+  // A problem from the Scale formula or Format formula button (e.g. a bad
+  // factor).
   const [plainFormulaNotice, setPlainFormulaNotice] = useState(null);
+  // Rewrites a plain formula in the box in the _ / ^ syntax it was read as.
+  const formatFormula = useCallback(() => {
+    if (!formulaInput.trim()) return;
+    if (formattedFormula === formulaInput) {
+      setPlainFormulaNotice("Formula is already formatted.");
+      return;
+    }
+    setFormulaInput(formattedFormula);
+    setPlainFormulaNotice(null);
+  }, [formulaInput, formattedFormula]);
 
   // Rewrites the formula at another scale (see scaleFormulaStr), e.g. ×2 to
   // match a paper that uses twice the formula unit. "1/2" or 0.5 halves it.
@@ -2014,6 +2155,14 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                   Reset
                 </button>
               )}
+              <button
+                type="button"
+                onClick={formatFormula}
+                title="Rewrites a plain formula (e.g. Fe2+2SiO4) in this app's _subscript_ / ^superscript^ syntax"
+                style={{ ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 }}
+              >
+                Format formula
+              </button>
             </div>
           </div>
           {plainFormulaNotice && (
@@ -2054,13 +2203,7 @@ export default function MineralFormulaParser({ initialName, initialFormula, onBa
                 setPlainFormulaNotice(null);
               }}
               onFocus={() => setFormulaFocused(true)}
-              onBlur={() => {
-                setFormulaFocused(false);
-                // Once the user clicks away, the plain formula is safe to
-                // rewrite in place (no cursor to move, nothing half-typed),
-                // so the box shows the _ / ^ syntax it was read as.
-                if (formattedFormula !== formulaInput) setFormulaInput(formattedFormula);
-              }}
+              onBlur={() => setFormulaFocused(false)}
               onScroll={(e) => {
                 if (formulaBackdropRef.current) {
                   formulaBackdropRef.current.scrollTop = e.target.scrollTop;

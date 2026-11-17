@@ -289,7 +289,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
   const idealH = idealHydrogenCount(idealRows, idealFormulaStr);
   const rows = [];
   const errors = [];
-  for (const { formula, cell, citation, amcValences } of citations) {
+  for (const { formula, cell, citation, amcValences, amcsdId, keepScale, amcScale } of citations) {
     const fail = (error) => errors.push({ citation, formula, error, bracketProblem: bracketProblem(formula || "") });
     const converted = isFormulaFormatted(formula) ? formula : parseChemicalFormula(formula);
     const reeResult = substituteRee(converted, reeElement);
@@ -311,9 +311,10 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
       const missingNonH = missingElements(requiredElements, formulaStr).some((el) => el !== "H");
       // A comma site ('(Mn,Fe,Sr)') can be filled differently once the scale
       // changes, which would change the weights, so it keeps its own scale.
+      // So does an AMC formula whose divisor was picked by hand.
       const hasSharedSite = /,(?!REE)/.test(formulaStr);
       const factor =
-        result && !missingNonH && !hasSharedSite
+        result && !missingNonH && !hasSharedSite && !keepScale
           ? citationScaleFactor(atomCountWithoutH(result), atomCountWithoutH(idealRows[0]?.result))
           : 1;
       if (factor !== 1) {
@@ -364,6 +365,9 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
         missingElements: missingElements(requiredElements, formulaStr),
         // Only set on a ?UUID= link's AMCSD citation.
         amcValences: amcValences || null,
+        amcsdId: amcsdId || null,
+        // The column the page's AMC formula scale applies to.
+        fromAmcFile: Boolean(amcScale),
       };
       // A range citation (e.g. a comma-shared site like
       // '(Mn,Fe,Sr,Ba,Mg,Zr)') splits into its two end-member columns, the
@@ -406,16 +410,51 @@ export function collapseMatchingRows(rows) {
 // columns buildEmpiricalRows produces. Empty if there's no ideal formula to
 // show, or if it fails to parse — a bad ideal formula shouldn't block the
 // citation comparison next to it.
-export function buildIdealRows(name, formulaStr) {
+// The average of the citation rows' atoms ({ atoms: { symbol: count },
+// count }), each row at the ideal formula's size (see citationScaleFactor),
+// or null when there are none. A range row is left out. A row's H is left
+// out of the H average when it was added from the ideal formula (see
+// hydrogenAdded), since then it says nothing about the sample.
+export function averageCitationAtoms(rows) {
+  const usable = rows.filter((r) => r.result && !r.result.isRange && r.result.atoms);
+  if (!usable.length) return null;
+  const sums = {};
+  const counts = {};
+  const symbols = new Set(usable.flatMap((r) => r.result.atoms.map((a) => a.symbol)));
+  for (const symbol of symbols) {
+    for (const r of usable) {
+      if (symbol === "H" && r.hydrogenAdded) continue;
+      const amount = r.result.atoms.filter((a) => a.symbol === symbol).reduce((t, a) => t + a.count, 0);
+      sums[symbol] = (sums[symbol] || 0) + amount;
+      counts[symbol] = (counts[symbol] || 0) + 1;
+    }
+  }
+  const atoms = Object.fromEntries(Object.keys(sums).map((symbol) => [symbol, sums[symbol] / counts[symbol]]));
+  return { atoms, count: usable.length };
+}
+
+export function buildIdealRows(name, formulaStr, average = null) {
   if (!name || !formulaStr) return [];
   let result;
   try {
-    result = analyze(`${name}\t${formulaStr}`);
+    result = analyze(`${name}\t${formulaStr}`, average ? { siteAverage: average.atoms } : {});
   } catch (e) {
     return [];
   }
   if (!result) return [];
-  if (!result.isRange) return [{ formulaStr: result.formulaStr, result, isIdealRow: true }];
+  if (!result.isRange) {
+    // siteAverageCount: how many citations the comma sites were filled to
+    // match, when that changed the formula (see averageCitationAtoms).
+    let siteAverageCount = null;
+    if (average) {
+      try {
+        if (analyze(`${name}\t${formulaStr}`)?.formulaStr !== result.formulaStr) siteAverageCount = average.count;
+      } catch {
+        // keep null
+      }
+    }
+    return [{ formulaStr: result.formulaStr, result, isIdealRow: true, siteAverageCount }];
+  }
   return [
     { formulaStr: result.columns[0].formulaStr, result: { ...result.columns[0], isModifiedIdeal: result.isModifiedIdeal }, isIdealRow: true },
     { formulaStr: result.columns[1].formulaStr, result: { ...result.columns[1], isModifiedIdeal: result.isModifiedIdeal }, isIdealRow: true },

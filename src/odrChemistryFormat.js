@@ -47,6 +47,16 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
     chars[i] = input.charAt(i);
   }
 
+  // A delimiter whose partner is missing (e.g. "_2(OH)" or "2_(OH)" with the
+  // rest of the formula formatted) only gets the missing partner, not a
+  // whole new pair. The output's delimiter count being odd means the last
+  // one opened a pair that's still open; the delimiters from position j to
+  // the end of the input being odd means the one at j closes a pair whose
+  // opener is missing (each later pair is whole).
+  const count = (text, d) => text.split(d).length - 1;
+  const isOpen = (d) => count(output, d) % 2 === 1;
+  const isStrayCloser = (j, d) => chars[j] === d && count(input.slice(j), d) % 2 === 1;
+
   for (let i = 0; i < len; i++) {
     let char = chars[i];
     let is_numeric = false;
@@ -91,7 +101,7 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
       } else if (
         (next_char === "+" || next_char === "-") &&
         next_next_char !== "x" &&
-        (is_prewrapped_valence || !output.endsWith(superscript_delimiter))
+        (is_prewrapped_valence || !output.endsWith(superscript_delimiter) || isOpen(superscript_delimiter))
       ) {
         // ...due to a '+' or '-' character that's not followed by an 'x', it's most
         //  likely a valence state  e.g.  Abelsonite: "Ni2+C31H32N4" => "Ni^2+^..."
@@ -107,6 +117,14 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
           //  duplicate them
           output += char + next_char + superscript_delimiter;
           i += 2; // skip ahead to the character after the closing superscript
+        } else if (prev_char === superscript_delimiter && isOpen(superscript_delimiter)) {
+          // Opened but not closed, e.g. "Pb^2+(": just close it
+          output += char + next_char + superscript_delimiter;
+          i++;
+        } else if (isStrayCloser(i + 2, superscript_delimiter)) {
+          // Closed but not opened, e.g. "Pb2+^": just open it
+          output += superscript_delimiter + char + next_char + superscript_delimiter;
+          i += 2;
         } else {
           // Wrap the sequence in delimiters
           output += superscript_delimiter + char + next_char + superscript_delimiter;
@@ -145,6 +163,13 @@ export function parseChemicalFormula(input, subscript_delimiter = "_", superscri
           //  dulicate them
           output += sequence + subscript_delimiter;
           i++; // skip over the closing subscript delimiter
+        } else if (prev_char === subscript_delimiter && isOpen(subscript_delimiter)) {
+          // Opened but not closed, e.g. "_2(OH)": just close it
+          output += sequence + subscript_delimiter;
+        } else if (isStrayCloser(i + 1, subscript_delimiter)) {
+          // Closed but not opened, e.g. "2_(OH)": just open it
+          output += subscript_delimiter + sequence + subscript_delimiter;
+          i++;
         } else if (
           char === "x" &&
           i >= 3 &&
