@@ -4,6 +4,7 @@ import DetailedView, { ViewTabs, TABBED_TABLE_RADIUS } from "./DetailedView.jsx"
 import { computeOxides } from "./oxideWeights.js";
 import { useWeightView } from "./weightView.js";
 import { formatDetailText, downloadTxt } from "./reportText.js";
+import { amcsdSearchUrl } from "./amcsd/searchLink.js";
 
 const downloadButtonStyle = {
   background: COLORS.panelAlt,
@@ -20,6 +21,19 @@ const downloadButtonStyle = {
 // formula) — and triggers the download. Each row's `result` only carries a
 // `name` when it came straight from analyze() (the non-range case); a
 // range's per-column result doesn't, so it's filled in from `title` here.
+// " amcsd 0014553" after an AMCSD record's citation, the number linking to
+// that record's search on the site (new tab).
+function AmcsdId({ id }) {
+  return (
+    <>
+      {" amcsd "}
+      <a href={amcsdSearchUrl(id)} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
+        {id}
+      </a>
+    </>
+  );
+}
+
 function downloadMineralReport(title, rows) {
   const content = rows
     .map((r) => formatDetailText({ ...r.result, name: r.result.name || title }))
@@ -461,6 +475,14 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
               <span>
                 {" — "}
                 {r.result.isModifiedIdeal ? "Modified Ideal Formula" : "Ideal IMA Formula"}
+                {r.siteAverageCount && (
+                  <span
+                    style={{ color: COLORS.warn, fontWeight: 600 }}
+                    title="The comma sites are filled with the charge-balanced amounts closest to the average of the datasets below (only the elements in each site count)."
+                  >
+                    , sites balanced to the average of {r.siteAverageCount} dataset{r.siteAverageCount === 1 ? "" : "s"}
+                  </span>
+                )}
               </span>
             ) : (
               r.result.isModifiedIdeal && (
@@ -516,6 +538,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                 {" — "}
                 {r.citation}
                 {r.displayYear != null && ` (${r.displayYear})`}
+                {r.amcsdId && <AmcsdId id={r.amcsdId} />}
               </span>
             )}
           </div>
@@ -538,9 +561,13 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 // citation (and year) are shown under the formula so the detail view still
 // says which reference the numbers came from.
 export const SummaryDetail = memo(function SummaryDetail({ result, row, onBack }) {
-  const citation = row?.citation
-    ? `${row.citation}${row.displayYear != null ? ` (${row.displayYear})` : ""}`
-    : null;
+  const citation = row?.citation ? (
+    <>
+      {row.citation}
+      {row.displayYear != null && ` (${row.displayYear})`}
+      {row.amcsdId && <AmcsdId id={row.amcsdId} />}
+    </>
+  ) : null;
   return (
     <div style={{ marginTop: 14 }}>
       <DetailedView result={result} citation={citation} onBack={onBack} />

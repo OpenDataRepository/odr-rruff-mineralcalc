@@ -1,10 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { COLORS, displayFormulaStr } from "./shared.jsx";
+import { COLORS, displayFormulaStr, backButtonStyle } from "./shared.jsx";
 import { SummaryView, SummaryDetail, FormulaHeader } from "./SummaryView.jsx";
 import { analyze, EXAMPLES } from "./MineralFormulaParser.jsx";
 import { loadCitationsForMineral } from "./cellparamsLoader.js";
 import { loadMineralForRecord } from "./mineralDataSources.js";
-import { buildIdealRows, buildEmpiricalRows, collapseMatchingRows, dedupeCitationRows } from "./empiricalFormulaRows.js";
+import {
+  buildIdealRows,
+  buildEmpiricalRows,
+  collapseMatchingRows,
+  dedupeCitationRows,
+  averageCitationAtoms,
+} from "./empiricalFormulaRows.js";
+
+const amcButtonStyle = { ...backButtonStyle, padding: "4px 10px", fontSize: 11.5 };
 
 // The first thing visitors see: the mineral's ideal formula (picked from the
 // URL's "mineral"/"formula" params if present, otherwise EXAMPLES[0]) side
@@ -77,7 +85,10 @@ export default function LandingPage({ onEdit }) {
     }
   }, [name, formulaInput]);
 
-  const idealRows = useMemo(
+  // The ideal formula as read on its own. When it has mixed-valence comma
+  // sites, the rows used below fill them to the citations' average instead
+  // (see idealRows).
+  const baseIdealRows = useMemo(
     () => (error || formulaInput === null ? [] : buildIdealRows(name, formulaInput)),
     [error, name, formulaInput]
   );
@@ -107,13 +118,37 @@ export default function LandingPage({ onEdit }) {
     };
   }, [mineralId]);
 
-  // The manual formula scale for an AMCSD record's formula: the unit cell is
-  // divided by this instead of the automatic choice (see amcFormulaScale in
-  // amcChemistry.js). `null` = automatic. Only the formula changes, never the
-  // weight percents.
-  const [amcDivisor, setAmcDivisor] = useState(null);
-  // The AMC scale info of the first citation that has one, for the picker.
+  // The manual formula scale for an AMCSD record's formula, as a factor on
+  // the automatic one (see amcFormulaScale in amcChemistry.js): ×2 divides
+  // the unit cell by half as much. `null` = automatic. Only the formula
+  // changes, never the weight percents.
+  const [amcFactor, setAmcFactor] = useState(null);
+  const [amcFactorInput, setAmcFactorInput] = useState("1");
+  const [amcFactorError, setAmcFactorError] = useState(null);
+  // The AMC scale info of the first citation that has one.
   const amcScale = lookupUuid ? lookup?.citations?.find((c) => c.amcScale)?.amcScale : null;
+  // The automatic AMC formula can itself be rescaled to the ideal formula's
+  // size (see buildEmpiricalRows), so ×1 means the formula as shown, not the
+  // unit cell ÷ the automatic divisor.
+  const amcShownFactor = useMemo(() => {
+    const amcCitation = amcScale ? lookup.citations.find((c) => c.amcScale) : null;
+    if (!amcCitation || isLoadingMineral) return 1;
+    const built = buildEmpiricalRows(fetched?.mineralName ?? name, [amcCitation], baseIdealRows, formulaInput ?? "");
+    return built.rows[0]?.scaledBy?.factor || 1;
+  }, [amcScale, lookup, isLoadingMineral, fetched, name, baseIdealRows, formulaInput]);
+  const amcDivisor = amcFactor && amcScale ? amcScale.divisor / (amcShownFactor * amcFactor) : null;
+  const applyAmcFactor = () => {
+    const s = amcFactorInput.trim();
+    const frac = s.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+    const factor = frac ? parseFloat(frac[1]) / parseFloat(frac[2]) : Number(s);
+    if (!s || !Number.isFinite(factor) || factor <= 0) {
+      setAmcFactorError(`"${amcFactorInput}" isn't a positive number (e.g. 2, 0.5 or 1/2).`);
+      return;
+    }
+    setAmcFactorError(null);
+    setAmcFactor(factor === 1 ? null : factor);
+    setOpenColumnIndex(null);
+  };
 
   // A ?UUID= link's citations come from its record.
   const citations = useMemo(() => {
@@ -127,9 +162,23 @@ export default function LandingPage({ onEdit }) {
   // citationErrors: the citations whose formula couldn't be read, reported
   // above the table so a bad formula isn't silently missing from it. The
   // same citation and formula listed twice in the data is reported once.
+  // A modified ideal formula's comma sites are filled to the average of the
+  // citations (read against the formula as first filled), so it's the
+  // charge-balanced formula closest to what was actually measured.
+  const { idealRows, empiricalRows: builtRows } = useMemo(() => {
+    if (isLoadingMineral) return { idealRows: baseIdealRows, empiricalRows: { rows: [], errors: [] } };
+    const mineralName = fetched?.mineralName ?? name;
+    const base = buildEmpiricalRows(mineralName, citations, baseIdealRows, formulaInput ?? "");
+    const average = baseIdealRows[0]?.result?.isModifiedIdeal ? averageCitationAtoms(base.rows) : null;
+    const filled = average ? buildIdealRows(name, formulaInput, average) : null;
+    if (!filled?.[0]?.siteAverageCount) return { idealRows: baseIdealRows, empiricalRows: base };
+    return {
+      idealRows: filled,
+      empiricalRows: buildEmpiricalRows(mineralName, citations, filled, formulaInput ?? ""),
+    };
+  }, [isLoadingMineral, fetched, name, citations, baseIdealRows, formulaInput]);
   const { rows: empiricalRows, errors: citationErrors } = useMemo(() => {
-    if (isLoadingMineral) return { rows: [], errors: [] };
-    const built = buildEmpiricalRows(fetched?.mineralName ?? name, citations, idealRows, formulaInput ?? "");
+    const built = builtRows;
     const seen = new Set();
     const errors = built.errors.filter((e) => {
       const key = `${e.citation}\n${e.formula}`;
@@ -138,7 +187,7 @@ export default function LandingPage({ onEdit }) {
       return true;
     });
     return { rows: built.rows, errors };
-  }, [isLoadingMineral, fetched, citations, idealRows, formulaInput]);
+  }, [builtRows]);
   const isLoadingCitations = Boolean(mineralId) && fetched === undefined && !fetchError;
 
   // Ideal formula column(s) first, citation columns after. Never deduped
@@ -172,6 +221,8 @@ export default function LandingPage({ onEdit }) {
   // it would actually hide a column.
   const hiddenCount = rows.length - collapsedRows.length;
   const hasMatchingColumns = hiddenCount > 0;
+  // The AMC formula's column number, as the footnotes show it ("(2)").
+  const amcColumn = displayedRows.findIndex((r) => r.fromAmcFile) + 1 || null;
 
   const [openColumnIndex, setOpenColumnIndex] = useState(null);
 
@@ -281,29 +332,40 @@ export default function LandingPage({ onEdit }) {
               }}
             >
             {amcScale && (
-              <label
+              <span
                 style={{ display: "flex", alignItems: "center", gap: 6 }}
-                title={`The AMC formula is the unit cell's contents divided by this. ${amcScale.symmetryCount} symmetry operations, so the choices are its divisors. Auto picks the one closest to the ideal formula's atom count. Weight percents don't change.`}
+                title={`Multiplies every subscript in the AMC file's formula${amcColumn ? `, column ${amcColumn}` : ""}, by this number (e.g. 2, 0.5 or 1/2). Weight percents don't change.`}
               >
-                AMC formula: unit cell ÷
-                <select
-                  value={amcDivisor ?? ""}
-                  onChange={(e) => {
-                    setAmcDivisor(e.target.value ? Number(e.target.value) : null);
-                    setOpenColumnIndex(null);
+                Scale{amcColumn ? ` column (${amcColumn})` : " AMC formula"} ×
+                <input
+                  value={amcFactorInput}
+                  onChange={(e) => setAmcFactorInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") applyAmcFactor();
                   }}
-                  style={{ fontSize: 12.5 }}
-                >
-                  <option value="">
-                    Auto ({amcScale.divisor})
-                  </option>
-                  {amcScale.divisors.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  aria-label="AMC formula scale factor"
+                  style={{ width: 44, fontSize: 12.5, padding: "3px 5px", fontFamily: COLORS.mono }}
+                />
+                <button type="button" onClick={applyAmcFactor} style={amcButtonStyle}>
+                  Scale formula
+                </button>
+                {amcFactor && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAmcFactor(null);
+                      setAmcFactorInput("1");
+                      setAmcFactorError(null);
+                      setOpenColumnIndex(null);
+                    }}
+                    title="Puts the formula back the way it was before scaling"
+                    style={amcButtonStyle}
+                  >
+                    Reset
+                  </button>
+                )}
+                {amcFactorError && <span style={{ color: COLORS.warn }}>{amcFactorError}</span>}
+              </span>
             )}
             {hasMatchingColumns && (
               <label
