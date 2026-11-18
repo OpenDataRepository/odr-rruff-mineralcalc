@@ -233,6 +233,9 @@ function rruffSampleCitationsOf(sample, probes = childrenIn(sample, RRUFF_MICROP
       formula,
       cell,
       citation: getRecordField(probe, "Child RRUFF ID") || getRecordField(sample, "RRUFF ID") || "",
+      // Measured chemistry is shown as is: no H or other element added or
+      // swapped, no amount changed (see buildEmpiricalRows).
+      readAsIs: true,
     }));
 }
 

@@ -289,10 +289,16 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
   const idealH = idealHydrogenCount(idealRows, idealFormulaStr);
   const rows = [];
   const errors = [];
-  for (const { formula, cell, citation, amcValences, amcsdId, keepScale, amcScale } of citations) {
+  for (const { formula, cell, citation, amcValences, amcsdId, keepScale, amcScale, readAsIs } of citations) {
     const fail = (error) => errors.push({ citation, formula, error, bracketProblem: bracketProblem(formula || "") });
     const converted = isFormulaFormatted(formula) ? formula : parseChemicalFormula(formula);
-    const reeResult = substituteRee(converted, reeElement);
+    // An AMC file's chemistry, and a RRUFF sample's or microprobe record's
+    // measured chemistry (readAsIs), is read as is: it can be scaled and its
+    // unassigned valences filled, but no element is added, swapped or
+    // changed in amount (no REE substitution, no H from the ideal formula).
+    const fromAmcFile = Boolean(amcScale);
+    const asIs = fromAmcFile || Boolean(readAsIs);
+    const reeResult = asIs ?{ formulaStr: converted, reeSubstitution: null } : substituteRee(converted, reeElement);
     const { reeSubstitution } = reeResult;
     let { formulaStr } = reeResult;
     try {
@@ -337,7 +343,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
       // With no shared element to scale by, the ideal count goes in as is
       // (hydrogenAdded.element is then null).
       let hydrogenAdded = null;
-      if (result && idealH && missingElements(requiredElements, formulaStr).includes("H")) {
+      if (result && !asIs && idealH && missingElements(requiredElements, formulaStr).includes("H")) {
         const empiricalAtoms = result.isRange ? result.columns[0].atoms : result.atoms;
         const scale = hydrogenScale(idealRows[0].result.atoms, empiricalAtoms);
         const count = scale
@@ -367,7 +373,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
         amcValences: amcValences || null,
         amcsdId: amcsdId || null,
         // The column the page's AMC formula scale applies to.
-        fromAmcFile: Boolean(amcScale),
+        fromAmcFile,
       };
       // A range citation (e.g. a comma-shared site like
       // '(Mn,Fe,Sr,Ba,Mg,Zr)') splits into its two end-member columns, the
