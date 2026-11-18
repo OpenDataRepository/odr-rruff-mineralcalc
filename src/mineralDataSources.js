@@ -257,6 +257,7 @@ function cellparamsCitationOf(record) {
     formula,
     cell: cellOf(record),
     citation: journal || (id ? `Cell Parameter ID ${id}` : ""),
+    cellParamId: id || null,
   };
 }
 

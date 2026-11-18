@@ -4,7 +4,7 @@ import DetailedView, { ViewTabs, TABBED_TABLE_RADIUS } from "./DetailedView.jsx"
 import { computeOxides } from "./oxideWeights.js";
 import { useWeightView } from "./weightView.js";
 import { formatDetailText, downloadTxt } from "./reportText.js";
-import { amcsdSearchUrl } from "./amcsd/searchLink.js";
+import { amcsdSearchUrl, cellParamSearchUrl } from "./amcsd/searchLink.js";
 
 const downloadButtonStyle = {
   background: COLORS.panelAlt,
@@ -21,17 +21,27 @@ const downloadButtonStyle = {
 // formula) — and triggers the download. Each row's `result` only carries a
 // `name` when it came straight from analyze() (the non-range case); a
 // range's per-column result doesn't, so it's filled in from `title` here.
-// " amcsd 0014553" after an AMCSD record's citation, the number linking to
-// that record's search on the site (new tab).
-function AmcsdId({ id }) {
+function ExternalLink({ href, children }) {
   return (
-    <>
-      {" amcsd "}
-      <a href={amcsdSearchUrl(id)} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
-        {id}
-      </a>
-    </>
+    <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
+      {children}
+    </a>
   );
+}
+
+// A row's citation and year, plus " amcsd 0014553" for an AMCSD record. For
+// an AMCSD or cell parameters record the whole thing links to that record's
+// search on the site (new tab).
+function Citation({ row }) {
+  const text = `${row.citation}${row.displayYear != null ? ` (${row.displayYear})` : ""}${
+    row.amcsdId ? ` amcsd ${row.amcsdId}` : ""
+  }`;
+  const href = row.amcsdId
+    ? amcsdSearchUrl(row.amcsdId)
+    : row.cellParamId
+      ? cellParamSearchUrl(row.cellParamId)
+      : null;
+  return href ? <ExternalLink href={href}>{text}</ExternalLink> : text;
 }
 
 function downloadMineralReport(title, rows) {
@@ -536,9 +546,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
             {r.citation && (
               <span>
                 {" — "}
-                {r.citation}
-                {r.displayYear != null && ` (${r.displayYear})`}
-                {r.amcsdId && <AmcsdId id={r.amcsdId} />}
+                <Citation row={r} />
               </span>
             )}
           </div>
@@ -562,11 +570,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
 // says which reference the numbers came from.
 export const SummaryDetail = memo(function SummaryDetail({ result, row, onBack }) {
   const citation = row?.citation ? (
-    <>
-      {row.citation}
-      {row.displayYear != null && ` (${row.displayYear})`}
-      {row.amcsdId && <AmcsdId id={row.amcsdId} />}
-    </>
+    <Citation row={row} />
   ) : null;
   return (
     <div style={{ marginTop: 14 }}>

@@ -289,7 +289,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
   const idealH = idealHydrogenCount(idealRows, idealFormulaStr);
   const rows = [];
   const errors = [];
-  for (const { formula, cell, citation, amcValences, amcsdId, keepScale, amcScale, readAsIs } of citations) {
+  for (const { formula, cell, citation, amcValences, amcsdId, cellParamId, keepScale, amcScale, readAsIs } of citations) {
     const fail = (error) => errors.push({ citation, formula, error, bracketProblem: bracketProblem(formula || "") });
     const converted = isFormulaFormatted(formula) ? formula : parseChemicalFormula(formula);
     // An AMC file's chemistry, and a RRUFF sample's or microprobe record's
@@ -372,6 +372,7 @@ export function buildEmpiricalRows(name, citations, idealRows = [], idealFormula
         // Only set on a ?UUID= link's AMCSD citation.
         amcValences: amcValences || null,
         amcsdId: amcsdId || null,
+        cellParamId: cellParamId || null,
         // The column the page's AMC formula scale applies to.
         fromAmcFile,
       };

@@ -117,6 +117,9 @@ export async function loadCitationsForMineral(mineralId) {
         gamma: parseFloat(record.gamma),
       },
       citation: record.reference,
+      // A journal ("J") record's id is its Cell Parameter ID, linked after
+      // the citation.
+      cellParamId: record.recordType === "J" && record.id ? record.id : null,
     }))
     .filter((row) => row.formula);
 
