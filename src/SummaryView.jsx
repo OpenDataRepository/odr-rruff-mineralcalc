@@ -4,7 +4,7 @@ import DetailedView, { ViewTabs, TABBED_TABLE_RADIUS } from "./DetailedView.jsx"
 import { computeOxides } from "./oxideWeights.js";
 import { useWeightView } from "./weightView.js";
 import { formatDetailText, downloadTxt } from "./reportText.js";
-import { amcsdSearchUrl } from "./amcsd/searchLink.js";
+import { amcsdSearchUrl, cellParamSearchUrl } from "./amcsd/searchLink.js";
 
 const downloadButtonStyle = {
   background: COLORS.panelAlt,
@@ -21,15 +21,27 @@ const downloadButtonStyle = {
 // formula) — and triggers the download. Each row's `result` only carries a
 // `name` when it came straight from analyze() (the non-range case); a
 // range's per-column result doesn't, so it's filled in from `title` here.
-// " amcsd 0014553" after an AMCSD record's citation, the number linking to
-// that record's search on the site (new tab).
-function AmcsdId({ id }) {
+// " amcsd 0014553" after an AMCSD record's citation, or " cellparams 4517"
+// after a cell parameters record's, the number linking to that record's
+// search on the site (new tab).
+function RecordId({ label, id, href }) {
   return (
     <>
-      {" amcsd "}
-      <a href={amcsdSearchUrl(id)} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
+      {` ${label} `}
+      <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
         {id}
       </a>
+    </>
+  );
+}
+
+function RecordIds({ row }) {
+  return (
+    <>
+      {row.amcsdId && <RecordId label="amcsd" id={row.amcsdId} href={amcsdSearchUrl(row.amcsdId)} />}
+      {row.cellParamId && (
+        <RecordId label="cellparams" id={row.cellParamId} href={cellParamSearchUrl(row.cellParamId)} />
+      )}
     </>
   );
 }
@@ -538,7 +550,7 @@ export const SummaryView = memo(function SummaryView({ title, formulaStr, rows, 
                 {" — "}
                 {r.citation}
                 {r.displayYear != null && ` (${r.displayYear})`}
-                {r.amcsdId && <AmcsdId id={r.amcsdId} />}
+                <RecordIds row={r} />
               </span>
             )}
           </div>
@@ -565,7 +577,7 @@ export const SummaryDetail = memo(function SummaryDetail({ result, row, onBack }
     <>
       {row.citation}
       {row.displayYear != null && ` (${row.displayYear})`}
-      {row.amcsdId && <AmcsdId id={row.amcsdId} />}
+      <RecordIds row={row} />
     </>
   ) : null;
   return (
