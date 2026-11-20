@@ -572,9 +572,13 @@ export const SummaryDetail = memo(function SummaryDetail({ result, row, onBack }
   const citation = row?.citation ? (
     <Citation row={row} />
   ) : null;
+  // An ideal row whose comma sites were balanced to the citations' average
+  // heads its detail view with that balanced formula, the one its summary
+  // line shows, not the formula as written.
+  const formulaStr = row?.siteAverageCount ? row.formulaStr : undefined;
   return (
     <div style={{ marginTop: 14 }}>
-      <DetailedView result={result} citation={citation} onBack={onBack} />
+      <DetailedView result={result} citation={citation} formulaStr={formulaStr} onBack={onBack} />
     </div>
   );
 });
