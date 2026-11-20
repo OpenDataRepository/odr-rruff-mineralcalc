@@ -213,7 +213,7 @@ const DETAIL_COL_WIDTHS_METALLIC = [16, 16, 22, 22, 24];
 // caller picks a single end-member column out first (see pickColumn in
 // MineralFormulaParser.jsx) via the summary view, so `result` here always
 // describes one concrete composition.
-const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
+const DetailedView = memo(function DetailedView({ result, citation, formulaStr, onBack }) {
   // Native metals (e.g. Cu, Au) aren't ionic — reporting a per-atom valence
   // or a "net charge" for them is meaningless, so both are hidden and only
   // the atomic weight percents are shown. See isMetallicFormula in
@@ -261,7 +261,7 @@ const DetailedView = memo(function DetailedView({ result, citation, onBack }) {
         >
           <div style={{ fontSize: 18, fontWeight: 700, minWidth: 0 }}>
             {result.name && <div>{renderMineralName(result.name)},</div>}
-            <div>{renderFormula(displayFormulaStr(result))}</div>
+            <div>{renderFormula(formulaStr ?? displayFormulaStr(result))}</div>
             {citation && (
               <div style={{ fontSize: 12.5, fontWeight: 400, color: COLORS.textDim, marginTop: 4, paddingBottom: 6 }}>
                 {citation}
